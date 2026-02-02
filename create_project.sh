@@ -35,8 +35,8 @@ echo "📁 프로젝트 생성 중: $PROJECT_NAME"
 echo "   설명: $DESCRIPTION"
 echo ""
 
-# 디렉토리 생성
-mkdir -p "$PROJECT_DIR"/{experiments/{configs,scripts},src/{data,models,training,evaluation},notebooks,results/{checkpoints,figures,tables},docs}
+# 최소 디렉토리 생성
+mkdir -p "$PROJECT_DIR"/{src,experiments}
 
 # 플레이스홀더 치환 함수
 replace_placeholders() {
@@ -46,22 +46,14 @@ replace_placeholders() {
         "$1"
 }
 
-# 메인 템플릿 복사
+# 핵심 템플릿 복사
 replace_placeholders "$TEMPLATE_DIR/CLAUDE.md" > "$PROJECT_DIR/CLAUDE.md"
 replace_placeholders "$TEMPLATE_DIR/CONCEPT.md" > "$PROJECT_DIR/CONCEPT.md"
 replace_placeholders "$TEMPLATE_DIR/EXPERIMENT_LOG.md" > "$PROJECT_DIR/EXPERIMENT_LOG.md"
 replace_placeholders "$TEMPLATE_DIR/README.md" > "$PROJECT_DIR/README.md"
 
-# 하위 폴더 템플릿
-replace_placeholders "$TEMPLATE_DIR/experiments_README.md" > "$PROJECT_DIR/experiments/README.md"
-replace_placeholders "$TEMPLATE_DIR/notebooks_README.md" > "$PROJECT_DIR/notebooks/README.md"
-
 # Python 패키지 초기화
 touch "$PROJECT_DIR/src/__init__.py"
-touch "$PROJECT_DIR/src/data/__init__.py"
-touch "$PROJECT_DIR/src/models/__init__.py"
-touch "$PROJECT_DIR/src/training/__init__.py"
-touch "$PROJECT_DIR/src/evaluation/__init__.py"
 
 # .gitignore
 cat > "$PROJECT_DIR/.gitignore" << 'EOF'
@@ -69,8 +61,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .ipynb_checkpoints/
-results/checkpoints/*.pt
-results/checkpoints/*.pth
+*.pt
+*.pth
 data/
 *.tar.gz
 *.zip
@@ -83,6 +75,14 @@ wandb/
 EOF
 
 echo "✅ 프로젝트 생성 완료!"
+echo ""
+echo "구조:"
+echo "  $PROJECT_NAME/"
+echo "  ├── CLAUDE.md          # Claude 지침"
+echo "  ├── CONCEPT.md         # 연구 아이디어"
+echo "  ├── EXPERIMENT_LOG.md  # 실험 기록"
+echo "  ├── src/               # 코드"
+echo "  └── experiments/       # 실험 설정"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""

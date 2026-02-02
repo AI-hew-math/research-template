@@ -84,7 +84,7 @@
 
 ## 6. 관련 연구 요약 (Related Work Summary)
 
-> 상세 논문 노트는 `survey/notes/` 참조
+> 상세 논문 노트는 `../_knowledge/papers/` 참조
 
 ### 핵심 선행 연구
 | 논문 | 핵심 아이디어 | 우리와의 차이 |

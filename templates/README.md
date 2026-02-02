@@ -15,10 +15,7 @@ conda activate {{PROJECT_NAME}}
 pip install -r requirements.txt
 
 # 학습
-python src/training/train.py --config experiments/configs/default.yaml
-
-# 평가
-python src/evaluation/evaluate.py --checkpoint results/checkpoints/best.pt
+python src/train.py --config experiments/config.yaml
 ```
 
 ## Project Structure
@@ -27,11 +24,8 @@ python src/evaluation/evaluate.py --checkpoint results/checkpoints/best.pt
 {{PROJECT_NAME}}/
 ├── CONCEPT.md             # 연구 아이디어
 ├── EXPERIMENT_LOG.md      # 실험 기록
-├── survey/                # 논문 서베이
-├── experiments/           # 실험 설정
 ├── src/                   # 소스 코드
-├── notebooks/             # Jupyter 노트북
-└── results/               # 결과물
+└── experiments/           # 실험 설정
 ```
 
 ## Key Results
@@ -43,16 +37,9 @@ python src/evaluation/evaluate.py --checkpoint results/checkpoints/best.pt
 | Baseline | | |
 | Ours | | |
 
-## Citation
+## Related Papers
 
-```bibtex
-@article{your2024paper,
-  title={},
-  author={},
-  journal={},
-  year={2024}
-}
-```
+논문 노트: `../_knowledge/papers/`
 
 ## License
 
