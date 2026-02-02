@@ -22,14 +22,15 @@ echo ""
 # 디렉토리 생성
 mkdir -p "$KNOWLEDGE_DIR"/{concepts,papers,methods,MOCs}
 
-# 템플릿 복사
+# 핵심 파일 복사
+cp "$TEMPLATE_DIR/INDEX.md" "$KNOWLEDGE_DIR/"
 cp "$TEMPLATE_DIR/lessons_learned.md" "$KNOWLEDGE_DIR/"
-cp "$TEMPLATE_DIR/MOC_TEMPLATE.md" "$KNOWLEDGE_DIR/MOCs/"
-cp "$TEMPLATE_DIR/concept_TEMPLATE.md" "$KNOWLEDGE_DIR/concepts/"
-cp "$TEMPLATE_DIR/methods_TEMPLATE.md" "$KNOWLEDGE_DIR/methods/"
 
-# 논문 노트 템플릿 복사
-cp "$SCRIPT_DIR/templates/paper_note_TEMPLATE.md" "$KNOWLEDGE_DIR/papers/TEMPLATE.md"
+# 템플릿 복사 (참고용)
+cp "$TEMPLATE_DIR/MOC_TEMPLATE.md" "$KNOWLEDGE_DIR/MOCs/_TEMPLATE.md"
+cp "$TEMPLATE_DIR/concept_TEMPLATE.md" "$KNOWLEDGE_DIR/concepts/_TEMPLATE.md"
+cp "$TEMPLATE_DIR/methods_TEMPLATE.md" "$KNOWLEDGE_DIR/methods/_TEMPLATE.md"
+cp "$SCRIPT_DIR/templates/paper_note_TEMPLATE.md" "$KNOWLEDGE_DIR/papers/_TEMPLATE.md"
 
 # README 생성
 cat > "$KNOWLEDGE_DIR/README.md" << 'EOF'
@@ -41,12 +42,19 @@ cat > "$KNOWLEDGE_DIR/README.md" << 'EOF'
 
 ```
 _knowledge/
-├── concepts/           # 원자적 개념 노트
-├── papers/             # 논문 노트
-├── methods/            # 재사용 가능한 기법
-├── MOCs/               # Map of Content (주제별 가이드)
-└── lessons_learned.md  # 축적된 교훈
+├── INDEX.md            ⭐ Claude가 가장 먼저 읽는 파일
+├── concepts/           원자적 개념 노트
+├── papers/             논문 노트
+├── methods/            재사용 가능한 기법
+├── MOCs/               Map of Content (주제별 가이드)
+└── lessons_learned.md  축적된 교훈
 ```
+
+## Claude 연동
+
+1. Claude는 항상 INDEX.md를 먼저 읽습니다
+2. INDEX.md의 키워드 매핑으로 관련 MOC를 찾습니다
+3. 새 지식 저장 시 INDEX.md를 업데이트합니다
 
 ## 파일 명명 규칙
 
@@ -54,21 +62,16 @@ _knowledge/
 - **개념**: `{concept_name}.md` (snake_case)
 - **기법**: `{method_name}.md` (snake_case)
 - **MOC**: `MOC_{topic}.md`
-
-## Claude 연동
-
-- 각 프로젝트의 CLAUDE.md가 이 폴더를 참조합니다
-- Claude가 새 지식 발견 시 자동으로 여기에 저장합니다
-- 프로젝트 작업 전 관련 MOC를 먼저 확인합니다
 EOF
 
 echo "✅ 지식 베이스 초기화 완료!"
 echo ""
 echo "구조:"
 echo "  _knowledge/"
-echo "  ├── concepts/    # 개념 노트"
-echo "  ├── papers/      # 논문 노트"
-echo "  ├── methods/     # 재사용 기법"
-echo "  ├── MOCs/        # 주제별 가이드"
-echo "  └── lessons_learned.md"
+echo "  ├── INDEX.md           ⭐ 핵심 인덱스"
+echo "  ├── concepts/          개념 노트"
+echo "  ├── papers/            논문 노트"
+echo "  ├── methods/           재사용 기법"
+echo "  ├── MOCs/              주제별 가이드"
+echo "  └── lessons_learned.md 교훈 기록"
 echo ""
