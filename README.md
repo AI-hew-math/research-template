@@ -1,19 +1,49 @@
 # Research Project Template
 
 Claude Code와 함께하는 연구 프로젝트 템플릿
+**지식이 축적되고 프로젝트 간 연결되는 구조**
 
 ---
 
-## 처음 시작하기 (최초 1회)
+## 전체 구조
 
+```
+Claude_projects/
+├── CLAUDE.md              # 전역 지침 (Claude가 항상 참조)
+├── _knowledge/            # 공유 지식 베이스
+│   ├── concepts/          # 원자적 개념 노트
+│   ├── papers/            # 논문 노트
+│   ├── methods/           # 재사용 기법
+│   ├── MOCs/              # 주제별 가이드
+│   └── lessons_learned.md # 축적된 교훈
+│
+├── research-template/     # 이 템플릿
+├── ProjectA/              # 개별 프로젝트들
+├── ProjectB/
+└── ...
+```
+
+---
+
+## 처음 시작하기
+
+### 1. 템플릿 설치 (최초 1회)
 ```bash
-# 1. 템플릿 clone
-git clone https://github.com/YOUR_USERNAME/research-template \
+git clone https://github.com/AI-hew-math/research-template \
   ~/Library/CloudStorage/OneDrive-postech.ac.kr/Claude_projects/research-template
 
-# 2. 실행 권한 부여
 cd ~/Library/CloudStorage/OneDrive-postech.ac.kr/Claude_projects/research-template
-chmod +x create_project.sh
+chmod +x *.sh
+```
+
+### 2. 전역 CLAUDE.md 설정 (최초 1회)
+```bash
+cp templates/GLOBAL_CLAUDE.md ../CLAUDE.md
+```
+
+### 3. 지식 베이스 초기화 (최초 1회)
+```bash
+./init_knowledge.sh
 ```
 
 ---
@@ -21,95 +51,97 @@ chmod +x create_project.sh
 ## 새 프로젝트 만들기
 
 ```bash
-# 1. 템플릿 폴더로 이동
 cd ~/Library/CloudStorage/OneDrive-postech.ac.kr/Claude_projects/research-template
-
-# 2. 프로젝트 생성
-./create_project.sh "프로젝트명" "연구 주제 설명"
-
-# 3. 프로젝트로 이동 + Claude 시작
-cd ../프로젝트명
+./create_project.sh "ProjectName" "연구 주제 설명"
+cd ../ProjectName
 claude
 ```
 
-### 4. 대화 시작
-```
-"연구 시작하자"
-```
-
-**끝.** Phase를 기억할 필요 없습니다.
+그리고: **"연구 시작하자"**
 
 ---
 
-## Claude가 알아서 하는 것들
+## Claude가 자동으로 하는 것
 
-| 당신이 하는 말 | Claude가 하는 일 |
-|---------------|-----------------|
-| "연구 시작하자" | 현재 상태 파악 → 다음 할 일 제안 |
-| "관련 논문 조사해줘" | WebSearch → reading_list.md에 추가 |
-| "이 논문 정리해줘: [링크]" | 논문 분석 → survey/notes/에 노트 생성 |
-| "baseline 구현해줘" | src/에 코드 작성 |
-| "실험 돌려줘" | 서버 확인 → sbatch 생성 → 제출 |
-| "결과 어때?" | 분석 → EXPERIMENT_LOG.md에 기록 |
-
----
-
-## 생성되는 프로젝트 구조
-
-```
-프로젝트명/
-├── CLAUDE.md              # Claude 지시사항 (자동으로 읽힘)
-├── CONCEPT.md             # 연구 아이디어 (Claude가 업데이트)
-├── EXPERIMENT_LOG.md      # 실험 기록 (Claude가 업데이트)
-│
-├── survey/                # 논문 서베이
-│   ├── reading_list.md    # 논문 목록
-│   └── notes/             # 개별 논문 노트
-│
-├── src/                   # 소스 코드
-├── experiments/           # 실험 설정 및 스크립트
-├── notebooks/             # Jupyter 노트북
-└── results/               # 결과물
-```
+| 상황 | Claude 행동 |
+|------|------------|
+| 새 주제 작업 시작 | `_knowledge/MOCs/`에서 관련 MOC 먼저 확인 |
+| 새 논문 발견 | `_knowledge/papers/`에 저장 + MOC 업데이트 |
+| 새 개념 정리 | `_knowledge/concepts/`에 저장 |
+| 재사용 가능한 기법 발견 | `_knowledge/methods/`에 저장 |
+| 실험 실패/성공 교훈 | `_knowledge/lessons_learned.md`에 추가 |
+| 새 실험 시작 전 | `lessons_learned.md` 확인 (과거 실수 방지) |
 
 ---
 
-## 예시
-
-```bash
-# Defocus Depth 연구 시작
-./create_project.sh "DefocusDepth" "Defocus blur를 이용한 depth estimation"
-cd ../DefocusDepth
-claude
-```
+## 지식이 연결되는 방식
 
 ```
-나: "defocus blur로 depth 추정하는 연구 하고 싶어"
+[ProbeX 프로젝트]
+    ↓ topology loss 사용
+    ↓
+[_knowledge/MOCs/MOC_topology.md] ← 주제 가이드
+    ↓ 링크
+    ↓
+[_knowledge/concepts/persistent_homology.md] ← 개념
+[_knowledge/papers/Chen_2024_TopoLoss.md] ← 논문
+    ↓
+    ↓ 같은 개념 사용
+    ↓
+[SegPH 프로젝트]
+```
 
-Claude: [관련 논문 조사]
-        [CONCEPT.md에 아이디어 정리]
-        "기존에 Depth from Defocus 연구가 있네요. 분석해볼까요?"
+**결과**:
+- 논문은 한 번만 정리
+- 개념은 프로젝트 간 공유
+- 한 프로젝트의 교훈이 다른 프로젝트에 전달
+
+---
+
+## 파일 구조 요약
+
+### 프로젝트별 (개별)
+```
+ProjectName/
+├── CLAUDE.md          # 프로젝트 지침
+├── CONCEPT.md         # 이 프로젝트 아이디어
+├── EXPERIMENT_LOG.md  # 이 프로젝트 실험 기록
+└── src/, experiments/, ...
+```
+
+### 공유 (_knowledge/)
+```
+_knowledge/
+├── concepts/          # 모든 프로젝트가 참조
+├── papers/            # 모든 프로젝트가 참조
+├── methods/           # 재사용 코드/기법
+├── MOCs/              # 주제별 "목차"
+└── lessons_learned.md # 전체 교훈
 ```
 
 ---
 
-## 요약: 전체 흐름
+## 예시 워크플로우
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  처음 1회: git clone → research-template 설치       │
-└─────────────────────────────────────────────────────┘
-                         ↓
-┌─────────────────────────────────────────────────────┐
-│  새 프로젝트: ./create_project.sh "Name" "Desc"     │
-└─────────────────────────────────────────────────────┘
-                         ↓
-┌─────────────────────────────────────────────────────┐
-│  연구 시작: cd ../Name && claude                    │
-│             "연구 시작하자"                          │
-└─────────────────────────────────────────────────────┘
-                         ↓
-┌─────────────────────────────────────────────────────┐
-│  이후: 자연스럽게 대화하면 Claude가 알아서 진행     │
-└─────────────────────────────────────────────────────┘
+나: "topology 기반 segmentation 연구 시작하자"
+
+Claude:
+  1. _knowledge/MOCs/MOC_topology.md 확인
+  2. 관련 논문, 개념 파악
+  3. "기존에 TopoLoss 관련 논문 3개 있어요.
+      ProbeX에서 erosion=3이 최적이었네요."
+  4. CONCEPT.md에 아이디어 정리
+  5. "새 MOC 만들까요? MOC_topo_segmentation.md"
 ```
+
+---
+
+## 요약
+
+| 기존 문제 | 해결 |
+|----------|------|
+| 프로젝트가 고립됨 | `_knowledge/`로 연결 |
+| 같은 논문 여러 번 정리 | 한 곳에 저장, 여러 곳에서 참조 |
+| 과거 실수 반복 | `lessons_learned.md`로 방지 |
+| Claude가 구조 모름 | CLAUDE.md에 명확한 지침 |
