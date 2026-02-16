@@ -32,6 +32,12 @@
 
 ---
 
+## Cross-Review
+
+> 전역 CLAUDE.md의 Cross-Review 규칙을 따릅니다.
+
+---
+
 ## 서버 경로
 
 - 맥북: `~/Library/CloudStorage/OneDrive-postech.ac.kr/Claude_projects/{{PROJECT_NAME}}/`
