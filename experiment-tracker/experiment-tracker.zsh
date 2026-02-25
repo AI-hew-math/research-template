@@ -102,7 +102,7 @@ _rs_poll_start() {
   # 중복 방지: lock + 30초 stale 타임아웃
   if [[ -f /tmp/rs-poll.lock ]]; then
     local lock_ts now
-    lock_ts=$(stat -f %m /tmp/rs-poll.lock 2>/dev/null || echo 0)
+    lock_ts=$(stat -f %m /tmp/rs-poll.lock 2>/dev/null || stat -c %Y /tmp/rs-poll.lock 2>/dev/null || echo 0)
     now=${EPOCHSECONDS:-$(date +%s)}
     (( now - lock_ts > 30 )) && rm -f /tmp/rs-poll.lock || return
   fi
