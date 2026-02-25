@@ -1,5 +1,5 @@
 #!/bin/zsh
-# experiment-tracker 설치 스크립트
+# experiment-tracker v2 설치 스크립트
 # 사용법: zsh install.sh  또는  bash install.sh
 
 set -e
@@ -16,8 +16,8 @@ else
   GHOSTTY_CONFIG=""
 fi
 
-echo "🧪 experiment-tracker 설치"
-echo "========================="
+echo "🧪 experiment-tracker v2 설치"
+echo "=============================="
 echo
 
 # 1) ~/.zshrc에 source 추가
@@ -25,12 +25,17 @@ if grep -qF "experiment-tracker.zsh" ~/.zshrc 2>/dev/null; then
   echo "✅ ~/.zshrc에 이미 등록됨"
 else
   echo "" >> ~/.zshrc
-  echo "# experiment-tracker: 터미널 탭에 실험 상태 표시" >> ~/.zshrc
+  echo "# experiment-tracker v2: 터미널 탭에 실험 상태 표시" >> ~/.zshrc
   echo "${SOURCE_LINE}" >> ~/.zshrc
   echo "✅ ~/.zshrc에 추가 완료"
 fi
 
-# 2) Ghostty config 확인
+# 2) 서버 설정
+echo
+echo "ℹ️  기본 서버: soda, vegi, potato"
+echo "   변경하려면 ~/.zshrc에 추가: export RS_SERVERS=(server1 server2 ...)"
+
+# 3) Ghostty config 확인
 echo
 if [[ -n "$GHOSTTY_CONFIG" && -f "$GHOSTTY_CONFIG" ]]; then
   if grep -q "shell-integration-features.*no-title" "$GHOSTTY_CONFIG"; then
@@ -52,22 +57,26 @@ else
   echo "   iTerm2 등 다른 터미널에서는 OSC 타이틀이 기본 지원될 수 있습니다."
 fi
 
-# 3) Claude Code 래퍼 (선택)
+# 4) Claude Code 래퍼 (선택)
 echo
 if type claude >/dev/null 2>&1; then
   CLAUDE_BIN=$(whence -p claude 2>/dev/null || command -v claude 2>/dev/null || which claude 2>/dev/null)
   if grep -qF "function claude" ~/.zshrc 2>/dev/null; then
     echo "✅ Claude Code 래퍼 이미 등록됨"
   else
-    echo "ℹ️  Claude Code가 타이틀을 'claude'로 덮어쓰는 버그가 있습니다."
+    echo "ℹ️  Claude Code 래퍼를 추가하면:"
+    echo "    - claude 시작 시 서버 실험 자동 감지"
+    echo "    - 탭 타이틀 자동 복원"
     read -p "   래퍼 함수를 추가할까요? (y/n) " yn
     if [[ "$yn" == "y" ]]; then
       cat >> ~/.zshrc << EOFCLAUDE
 
-# Claude Code 시작 시 타이틀 복원
+# Claude Code 시작 시 실험 자동 감지 + 타이틀 복원
 unalias claude 2>/dev/null
 function claude {
+  _rs_auto_detect
   _rs_set_title
+  _rs_watcher_start 2>/dev/null
   CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 ${CLAUDE_BIN} "\$@"
   _rs_set_title
 }
@@ -78,9 +87,17 @@ EOFCLAUDE
 fi
 
 echo
-echo "========================="
+echo "=============================="
 echo "설치 완료! 다음 단계:"
 echo "  1. Ghostty를 Cmd+Q로 종료 후 재시작"
-echo "  2. 새 터미널에서: st add \"my_exp:12345\" soda"
-echo "  3. 탭 타이틀 확인: 폴더명 : 🧪×1 my_exp:12345"
+echo "  2. 프로젝트에 .experiment-paths 파일 생성:"
+echo "     echo '/projects/MyProject' > .experiment-paths"
+echo "  3. 새 터미널에서: st add \"my_exp:12345\" soda"
+echo "  4. 탭 타이틀 확인: 폴더명 : 🧪×1 my_exp:12345"
+echo
+echo "v2 새 기능:"
+echo "  - claude 시작 시 서버 실험 자동 감지 (3-tier)"
+echo "  - rs_claim: job workdir → 프로젝트 매핑 캐시"
+echo "  - rs_sbatch: 프로젝트 태그 자동 삽입 제출"
+echo "  - st map: 경로 캐시 보기"
 echo
