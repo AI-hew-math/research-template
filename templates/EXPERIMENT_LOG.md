@@ -13,9 +13,7 @@
 
 ### 설정
 - **서버**: soda / vegi / potato
-- **Job name**: `{{PROJECT_NAME}}_실험명`  ← 프로젝트명 필수!
 - **Job ID**:
-- **W&B**: project=`{{PROJECT_NAME}}`, run=`실험명`
 - **스크립트**: `experiments/scripts/xxx.sh`
 - **Config**: `experiments/configs/xxx.yaml`
 - **Commit**: `abc1234`
