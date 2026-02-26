@@ -32,6 +32,31 @@
 
 ---
 
+## 실험 네이밍 규칙 (절대 규칙)
+
+**모든 실험에는 프로젝트명 `{{PROJECT_NAME}}`을 반드시 포함한다.**
+
+서버든 로컬이든, 실험을 제출/실행할 때 아래 규칙을 따릅니다:
+
+| 대상 | 규칙 | 예시 |
+|------|------|------|
+| SLURM job name | `--job-name={{PROJECT_NAME}}_실험명` | `--job-name={{PROJECT_NAME}}_baseline_v1` |
+| W&B | `project="{{PROJECT_NAME}}"`, run name에도 포함 | `wandb.init(project="{{PROJECT_NAME}}", name="baseline_v1")` |
+| 출력 디렉토리 | 프로젝트 내부 경로 사용 | `~/projects/{{PROJECT_NAME}}/results/실험명/` |
+| 로그 파일 | `{{PROJECT_NAME}}_실험명.log` | `{{PROJECT_NAME}}_baseline_v1.log` |
+| tmux/screen 세션 | `{{PROJECT_NAME}}_` 접두사 | `tmux new -s {{PROJECT_NAME}}_train` |
+
+### Claude 행동 규칙
+
+- 실험 스크립트 작성 시 위 네이밍을 **자동 적용**
+- 사용자가 프로젝트명 없이 실험을 제출하려 하면 **경고 후 수정 제안**
+- EXPERIMENT_LOG.md 기록 시 네이밍 준수 여부 확인
+- `squeue`, `wandb` 등에서 **이 프로젝트 실험만 필터링**하여 보고:
+  - `squeue -u $USER --name={{PROJECT_NAME}}*`
+  - 다른 프로젝트의 job은 무시 (프로젝트 격리 원칙)
+
+---
+
 ## Cross-Review
 
 > 전역 CLAUDE.md의 Cross-Review 규칙을 따릅니다.
