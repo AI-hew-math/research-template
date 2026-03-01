@@ -1,7 +1,0 @@
-# Feasibility Check: PH for 3D Scene Graph
-numpy>=1.21.0
-gudhi>=3.8.0
-scikit-learn>=1.0.0
-matplotlib>=3.5.0
-tqdm>=4.60.0
-h5py>=3.0.0  # ModelNet40 로딩용
