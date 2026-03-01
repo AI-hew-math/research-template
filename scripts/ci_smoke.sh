@@ -371,13 +371,13 @@ else
 fi
 
 # 4l: Stop without last_assistant_message → transcript recovery (DETERMINISTIC)
-# Create mock transcript with assistant messages
+# Use REAL Claude Code transcript format: {type:"assistant", message:{role:"assistant", content:[{type:"text",text:"..."}]}}
 MOCK_TRANSCRIPT_RECOVERY=$(mktemp)
 cat > "$MOCK_TRANSCRIPT_RECOVERY" << 'MOCKJSONL'
-{"type": "message", "role": "user", "content": "Please help me"}
-{"type": "message", "role": "assistant", "content": "I'll help you with that task."}
-{"type": "message", "role": "user", "content": "Thanks, continue"}
-{"type": "message", "role": "assistant", "content": "This is the final assistant response from transcript."}
+{"type":"user","message":{"role":"user","content":"Please help me"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Let me think..."},{"type":"text","text":"I'll help you with that task."}]}}
+{"type":"user","message":{"role":"user","content":"Thanks, continue"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"FINAL_ASSISTANT_TEXT_FROM_NESTED_TRANSCRIPT"}]}}
 MOCKJSONL
 
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "transcript recovery test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
@@ -387,10 +387,10 @@ echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "transcript_path": 
 
 if [[ -f "review_cycles/cycle_0007/to_gpt/last_assistant_message.md" ]]; then
     RECOVERED_MSG=$(cat "review_cycles/cycle_0007/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
-    if echo "$RECOVERED_MSG" | grep -q "final assistant response from transcript"; then
-        pass "Stop recovers last_assistant_message from transcript (fallback)"
+    if echo "$RECOVERED_MSG" | grep -q "FINAL_ASSISTANT_TEXT_FROM_NESTED_TRANSCRIPT"; then
+        pass "Stop recovers last_assistant_message from nested transcript"
     else
-        fail "transcript recovery failed: got '$RECOVERED_MSG'"
+        fail "nested transcript recovery failed: got '$RECOVERED_MSG'"
     fi
 else
     fail "Stop should create last_assistant_message.md via transcript fallback"
@@ -404,6 +404,37 @@ else
 fi
 
 rm -f "$MOCK_TRANSCRIPT_RECOVERY"
+
+# 4l-2: 0-byte last_assistant_message should show MISSING warning
+# Create transcript with only thinking blocks (no text output)
+MOCK_TRANSCRIPT_EMPTY=$(mktemp)
+cat > "$MOCK_TRANSCRIPT_EMPTY" << 'MOCKJSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Just thinking, no text output"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"test","name":"Bash","input":{}}]}}
+MOCKJSONL
+
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "empty transcript test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "transcript_path": "'"$MOCK_TRANSCRIPT_EMPTY"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+# File should NOT exist (deleted when 0-byte)
+if [[ ! -f "review_cycles/cycle_0008/to_gpt/last_assistant_message.md" ]]; then
+    pass "0-byte last_assistant_message.md is deleted"
+else
+    if [[ ! -s "review_cycles/cycle_0008/to_gpt/last_assistant_message.md" ]]; then
+        fail "0-byte file should be deleted"
+    else
+        pass "last_assistant_message.md has content (unexpected but ok)"
+    fi
+fi
+
+# packet.md should show MISSING warning
+if grep -q "MISSING.*last_assistant_message" "review_cycles/cycle_0008/to_gpt/packet.md" 2>/dev/null; then
+    pass "packet.md shows MISSING for empty transcript extraction"
+else
+    fail "packet.md should show MISSING when extraction yields nothing"
+fi
+
+rm -f "$MOCK_TRANSCRIPT_EMPTY"
 
 # 4m: run_summary.md with 5 items verification (DETERMINISTIC)
 # Create a fake run with complete structure
@@ -440,7 +471,7 @@ touch "$FAKE_SUMMARY_RUN/run_card.md"
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_summary test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Checking run summary"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-RUN_SUMMARY_FILE="review_cycles/cycle_0008/to_gpt/run_summary.md"
+RUN_SUMMARY_FILE="review_cycles/cycle_0009/to_gpt/run_summary.md"
 
 if [[ -f "$RUN_SUMMARY_FILE" ]]; then
     pass "run_summary.md created"

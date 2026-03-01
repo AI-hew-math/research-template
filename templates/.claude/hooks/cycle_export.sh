@@ -64,8 +64,27 @@ try:
         with open(sys.argv[2], 'w') as f:
             f.write(prompt)
 
-    assistant_msg = data.get('last_assistant_message', '')
-    if assistant_msg:
+    # Support multiple key variations for assistant message
+    assistant_msg = (
+        data.get('last_assistant_message') or
+        data.get('lastAssistantMessage') or
+        data.get('assistant_message') or
+        data.get('assistantMessage') or
+        ''
+    )
+    # Handle dict/list values (flatten to text)
+    if isinstance(assistant_msg, dict):
+        assistant_msg = assistant_msg.get('text') or assistant_msg.get('content') or str(assistant_msg)
+    elif isinstance(assistant_msg, list):
+        parts = []
+        for item in assistant_msg:
+            if isinstance(item, dict) and item.get('type') == 'text':
+                parts.append(item.get('text', ''))
+            elif isinstance(item, str):
+                parts.append(item)
+        assistant_msg = '\n'.join(parts)
+    # Only save if non-empty string
+    if assistant_msg and isinstance(assistant_msg, str) and assistant_msg.strip():
         with open(sys.argv[3], 'w') as f:
             f.write(assistant_msg)
 
@@ -196,6 +215,29 @@ import json
 transcript_path = sys.argv[1]
 output_path = sys.argv[2]
 
+def extract_text_from_content(content):
+    """Recursively extract text from content (str, list, or dict)."""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                # Prefer type=="text" blocks, skip thinking/tool_use
+                if item.get('type') == 'text':
+                    parts.append(item.get('text', ''))
+                elif item.get('type') not in ('thinking', 'tool_use', 'tool_result'):
+                    # Fallback for other dict types
+                    text = item.get('text') or item.get('content') or ''
+                    if text:
+                        parts.append(extract_text_from_content(text))
+            elif isinstance(item, str):
+                parts.append(item)
+        return '\n'.join(p for p in parts if p)
+    if isinstance(content, dict):
+        return content.get('text') or content.get('content') or ''
+    return ''
+
 # Read transcript and find last assistant message
 last_assistant = None
 try:
@@ -206,21 +248,34 @@ try:
                 continue
             try:
                 obj = json.loads(line)
-                # Look for assistant/model messages
-                role = obj.get('role', '') or obj.get('type', '')
-                if role in ('assistant', 'model', 'response'):
-                    content = obj.get('content', '') or obj.get('message', '') or obj.get('text', '')
-                    if isinstance(content, list):
-                        # Handle content blocks
-                        text_parts = []
-                        for block in content:
-                            if isinstance(block, dict) and block.get('type') == 'text':
-                                text_parts.append(block.get('text', ''))
-                            elif isinstance(block, str):
-                                text_parts.append(block)
-                        content = '\n'.join(text_parts)
-                    if content:
-                        last_assistant = content
+
+                # Pattern 1: Claude Code transcript format
+                # {type: "assistant", message: {role: "assistant", content: [...]}}
+                if obj.get('type') == 'assistant':
+                    msg = obj.get('message', {})
+                    if msg.get('role') == 'assistant':
+                        content = msg.get('content')
+                        text = extract_text_from_content(content)
+                        if text:
+                            last_assistant = text
+                    continue
+
+                # Pattern 2: Direct role field (legacy/other formats)
+                role = obj.get('role', '')
+                if role in ('assistant', 'model'):
+                    content = obj.get('content') or obj.get('text') or ''
+                    text = extract_text_from_content(content)
+                    if text:
+                        last_assistant = text
+                    continue
+
+                # Pattern 3: type == 'response' or similar
+                if obj.get('type') in ('response', 'model'):
+                    content = obj.get('content') or obj.get('message') or obj.get('text') or ''
+                    text = extract_text_from_content(content)
+                    if text:
+                        last_assistant = text
+
             except json.JSONDecodeError:
                 continue
 except Exception:
@@ -238,6 +293,12 @@ PYEXTRACT_ASSISTANT
         else
             LAST_ASSISTANT_MISSING="Stop payload missing last_assistant_message"
         fi
+    fi
+
+    # Final check: if file exists but is 0-byte, mark as missing and delete
+    if [[ -f "$TO_GPT/last_assistant_message.md" && ! -s "$TO_GPT/last_assistant_message.md" ]]; then
+        rm -f "$TO_GPT/last_assistant_message.md"
+        LAST_ASSISTANT_MISSING="extracted content was empty"
     fi
 fi
 
