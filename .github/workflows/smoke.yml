@@ -1,0 +1,29 @@
+name: Smoke Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run smoke tests
+        run: |
+          chmod +x scripts/ci_smoke.sh
+          chmod +x create_project.sh
+          chmod +x init_knowledge.sh
+          chmod +x templates/scripts/*.sh
+          chmod +x templates/.claude/hooks/*.sh
+          bash scripts/ci_smoke.sh

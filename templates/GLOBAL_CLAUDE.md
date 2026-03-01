@@ -14,13 +14,17 @@ Claude_projects/
 │   └── lessons_learned.md ← 프로젝트 간 교훈
 │
 ├── ProjectA/
+│   ├── runs/              ← Run Cards (자동)
+│   ├── experiments/memos/ ← Experiment Memos
+│   ├── decisions/         ← Decision Records
+│   └── scripts/           ← run.sh, draft_memo.py
 ├── ProjectB/
 └── ...
 ```
 
 ---
 
-## 핵심 규칙 (3개)
+## 핵심 규칙 (4개)
 
 ### 1. 세션 시작 시
 
@@ -35,7 +39,9 @@ Claude_projects/
 |----------|----------|
 | 새 논문 | `_knowledge/papers/{Author}_{Year}_{Keyword}.md` |
 | 이 프로젝트 아이디어 | `{Project}/CONCEPT.md` |
-| 실험 결과 | `{Project}/EXPERIMENT_LOG.md` |
+| 실험 결과 | `{Project}/runs/<RUN_ID>/run_card.md` |
+| 실험 분석 | `{Project}/experiments/memos/<memo_id>.md` |
+| 중요 결정 | `{Project}/decisions/DR-NNN_<title>.md` |
 | 프로젝트 간 교훈 | `_knowledge/lessons_learned.md` |
 
 ### 3. 실험 전
@@ -44,6 +50,21 @@ Claude_projects/
 1. _knowledge/lessons_learned.md 확인 (과거 실수 방지)
 2. 관련 교훈 있으면 사용자에게 알리기
 ```
+
+### 4. 3카드 로깅 규칙
+
+**Run Card (FACT-ONLY)**
+- 관측된 사실만 기록
+- 금지: 원인 추정, 해석, "~인 것 같다"
+
+**Experiment Memo (Observation/Inference 분리)**
+- Observations: Run Card에서 추출한 사실만
+- Inferences: 각 가설에 Evidence/Counter-evidence/Confidence 필수
+
+**Decision Record (정량 기준)**
+- 최소 2개 대안 비교
+- 정량적 성공 기준 명시
+- 롤백 계획 포함
 
 ---
 
