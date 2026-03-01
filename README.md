@@ -180,33 +180,77 @@ RS_GIT_SNAP=1 RS_GIT_PUSH=1 ./scripts/run.sh --exp baseline python train.py
 
 **cycle은 프롬프트 단위로 증가합니다.** 세션 종료 없이 매 프롬프트마다 패킷이 자동 생성됩니다.
 
-### 구조
+### 패킷 파일 스펙
+
+| 파일 | 조건 | 우선순위 | 설명 |
+|------|------|----------|------|
+| `UPLOAD_LIST.md` | 항상 | 필수 | 업로드 가이드 |
+| `packet.md` | 항상 | 필수 | 메타데이터 + 파일 크기 |
+| `user_prompt.txt` | 항상 | 필수 | 사용자 프롬프트 |
+| `last_assistant_message.md` | 항상 | 필수 | Agent 최종 응답 |
+| `git_diff.patch` | git repo | 권장 | 코드 변경사항 |
+| `git_status.txt` | git repo | 선택 | git status 출력 |
+| `git_head.txt` | git repo | 선택 | 현재 커밋 SHA |
+| `transcript_tail.jsonl` | transcript 제공 시 | 권장 | 대화 요약 (에러 우선 추출) |
+| `run_logs.txt` | 실패 run 존재 시 | 권장 | 실패 로그 (stderr/stdout) |
+| `claude_transcript.jsonl` | transcript 제공 시 | 보관용 | 전체 대화 (업로드 비권장) |
+
+### 구조 (v1.1+)
 
 ```
 review_cycles/
 ├── cycle_0001/
 │   ├── to_gpt/
-│   │   ├── user_prompt.txt          # 사용자 프롬프트
-│   │   ├── last_assistant_message.md # agent 최종 응답
-│   │   ├── packet.md, UPLOAD_LIST.md
-│   │   └── git_diff.patch
+│   │   ├── UPLOAD_LIST.md              # [필수] 업로드 순서 가이드
+│   │   ├── packet.md                   # [필수] 메타데이터 + 파일 크기
+│   │   ├── user_prompt.txt             # [필수] 사용자 프롬프트
+│   │   ├── last_assistant_message.md   # [필수] Agent 응답
+│   │   ├── git_diff.patch              # [권장] 코드 diff (git repo 시)
+│   │   ├── transcript_tail.jsonl       # [권장] 대화 요약 (에러 우선)
+│   │   ├── run_logs.txt                # [권장] 실패 로그 (있을 때)
+│   │   ├── git_status.txt, git_head.txt # [선택]
+│   │   └── claude_transcript.jsonl     # [보관용] 전체 대화
 │   ├── from_gpt/
 │   └── to_claude/
-├── cycle_0002/
 └── ...
 ```
+
+### 환경변수
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `RS_TRANSCRIPT_TAIL_LINES` | 400 | transcript_tail 최대 라인 수 |
+| `RS_RUN_LOG_MAX_BYTES` | 51200 | run_logs.txt 최대 크기 (50KB) |
 
 ### 사용 흐름
 
 1. agent CLI 실행 → hooks 승인 (최초 1회)
 2. 프롬프트 입력 → agent 응답 완료
 3. `review_cycles/cycle_XXXX/to_gpt/` 자동 생성
-4. GPT에 업로드 → 피드백 받기
+4. GPT에 **필수 + 권장** 파일만 업로드 → 피드백 받기
 
 ### 자동 생성 시점 (hooks 기반)
 
 - **UserPromptSubmit**: cycle +1, `user_prompt.txt` 저장
-- **Stop**: `last_assistant_message.md` 저장, 패킷 갱신
+- **Stop**: `last_assistant_message.md`, transcript_tail, run_logs, packet 갱신
+
+### 2단계 전략: 보관 vs 업로드
+
+- **claude_transcript.jsonl**: 전체 대화 보관용 (큰 파일, 업로드 비권장)
+- **transcript_tail.jsonl**: 업로드용 요약 (에러/실패/traceback 우선 추출, 최근 라인 우선)
+- **run_logs.txt**: 실패한 run의 stderr/stdout만 추출 (mtime 내림차순, 크기 제한)
+
+#### transcript_tail.jsonl 포맷 (valid JSONL)
+
+```jsonl
+{"type":"line","idx":0,"score":0,"text":"Starting task..."}
+{"type":"omitted","count":15}
+{"type":"line","idx":18,"score":2,"text":"Error: File not found"}
+{"type":"line","idx":19,"score":1,"text":"Traceback (most recent call last):"}
+```
+
+- `type:"line"`: 원본 라인 (`idx`=원본 인덱스, `score`=에러 관련도, `text`=내용)
+- `type:"omitted"`: 생략 표시 (`count`=생략된 라인 수)
 
 ### 실동작 검증 (최초 1회)
 
@@ -215,7 +259,7 @@ cd MyProject && claude                    # 1. /hooks → UserPromptSubmit, Stop
 # 프롬프트 1회 입력
 cat review_cycles/cycle_0001/to_gpt/user_prompt.txt   # 2. 프롬프트 저장 확인
 # agent 응답 완료 대기
-ls review_cycles/cycle_0001/to_gpt/       # 3. last_assistant_message.md, packet.md 확인
+ls review_cycles/cycle_0001/to_gpt/       # 3. packet.md, 파일 크기 확인
 ```
 
 ---

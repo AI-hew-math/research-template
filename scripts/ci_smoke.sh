@@ -246,6 +246,130 @@ else
     fail "stop_hook_active should skip git operations"
 fi
 
+# 4h: transcript_tail.jsonl generation test (JSONL validity + error extraction)
+# Create a mock transcript file with error content
+MOCK_TRANSCRIPT=$(mktemp)
+cat > "$MOCK_TRANSCRIPT" << 'MOCKEOF'
+{"type": "message", "content": "Starting task..."}
+{"type": "message", "content": "Processing data..."}
+{"type": "message", "content": "Error: File not found"}
+{"type": "message", "content": "Traceback (most recent call last):"}
+{"type": "message", "content": "  File 'test.py', line 10"}
+{"type": "message", "content": "FileNotFoundError: test.txt"}
+{"type": "message", "content": "Retrying..."}
+{"type": "message", "content": "Success after retry"}
+MOCKEOF
+
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "transcript test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "transcript_path": "'"$MOCK_TRANSCRIPT"'", "last_assistant_message": "Done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+if [[ -f "review_cycles/cycle_0005/to_gpt/claude_transcript.jsonl" ]]; then
+    pass "transcript_path copies full transcript"
+else
+    fail "transcript_path should copy full transcript"
+fi
+
+if [[ -f "review_cycles/cycle_0005/to_gpt/transcript_tail.jsonl" ]]; then
+    # Check that error lines are prioritized (via text field)
+    if grep -q '"Error\|"Traceback' "review_cycles/cycle_0005/to_gpt/transcript_tail.jsonl"; then
+        pass "transcript_tail.jsonl extracts error content"
+    else
+        fail "transcript_tail.jsonl should prioritize error content"
+    fi
+
+    # JSONL validity check: every line must parse as JSON
+    JSONL_VALID=$(python3 -c '
+import sys, json
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        for i, line in enumerate(f, 1):
+            line = line.strip()
+            if line:
+                json.loads(line)
+    print("VALID")
+except Exception as e:
+    print(f"INVALID at line {i}: {e}")
+' "review_cycles/cycle_0005/to_gpt/transcript_tail.jsonl" 2>&1)
+
+    if [[ "$JSONL_VALID" == "VALID" ]]; then
+        pass "transcript_tail.jsonl is valid JSONL"
+    else
+        fail "transcript_tail.jsonl JSONL invalid: $JSONL_VALID"
+    fi
+else
+    fail "transcript_tail.jsonl should be created"
+fi
+
+rm -f "$MOCK_TRANSCRIPT"
+
+# 4i: run_logs.txt generation test (DETERMINISTIC - create fake failed run)
+# Create a dedicated fake failed run for this test (not relying on FAIL_RUN timing)
+FAKE_FAIL_RUN="$PROJECT_DIR/runs/ci_fake_fail_run"
+mkdir -p "$FAKE_FAIL_RUN"
+
+# Create run_card.md with exit code 42 (multiple format patterns tested)
+cat > "$FAKE_FAIL_RUN/run_card.md" << 'RUNCARD'
+# Run Card: ci_fake_fail_run
+
+| Field | Value |
+|-------|-------|
+| **Exit Code** | 42 |
+| **Duration** | 1s |
+RUNCARD
+
+# Create stderr with Error content
+echo "Error: CI deterministic failure test" > "$FAKE_FAIL_RUN/stderr.log"
+echo "Traceback (most recent call last):" >> "$FAKE_FAIL_RUN/stderr.log"
+echo "  File 'test.py', line 1" >> "$FAKE_FAIL_RUN/stderr.log"
+
+# Create stdout
+echo "stdout content for ci test" > "$FAKE_FAIL_RUN/stdout.log"
+
+# Touch to ensure mtime is recent
+touch "$FAKE_FAIL_RUN/run_card.md"
+
+# Trigger cycle_export Stop to collect run_logs
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_logs test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Checking logs"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+if [[ -f "review_cycles/cycle_0006/to_gpt/run_logs.txt" ]]; then
+    pass "run_logs.txt created for failed runs"
+
+    # Verify Error content is included
+    if grep -q "CI deterministic failure test" "review_cycles/cycle_0006/to_gpt/run_logs.txt"; then
+        pass "run_logs.txt contains Error content from stderr"
+    else
+        fail "run_logs.txt should contain stderr Error content"
+    fi
+
+    # Verify exit code is shown
+    if grep -q "exit=42\|exit_code.*42" "review_cycles/cycle_0006/to_gpt/run_logs.txt"; then
+        pass "run_logs.txt shows exit code"
+    else
+        fail "run_logs.txt should show exit code"
+    fi
+else
+    fail "run_logs.txt should be created (deterministic test)"
+fi
+
+# Cleanup fake run
+rm -rf "$FAKE_FAIL_RUN"
+
+# 4j: packet.md contains file sizes
+if grep -q "B |" "review_cycles/cycle_0005/to_gpt/packet.md" 2>/dev/null; then
+    pass "packet.md includes file sizes"
+else
+    fail "packet.md should include file sizes (bytes)"
+fi
+
+# 4k: packet.md contains priority column
+if grep -q "우선순위\|필수\|권장\|선택" "review_cycles/cycle_0005/to_gpt/packet.md" 2>/dev/null; then
+    pass "packet.md includes upload priorities"
+else
+    fail "packet.md should include priority (필수/권장/선택)"
+fi
+
 # --- Test 5: git_snap.sh ---
 info "Test 5: git_snap.sh"
 
