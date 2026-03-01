@@ -1,0 +1,4 @@
+# Claude Code local state (session-specific)
+.claude/.last_active_session_id
+.claude/.last_review_ts
+.claude/state/
