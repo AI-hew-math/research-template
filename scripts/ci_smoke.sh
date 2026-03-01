@@ -249,6 +249,10 @@ fi
 # --- Test 5: git_snap.sh ---
 info "Test 5: git_snap.sh"
 
+# Configure git for CI environments (required for commit)
+git config user.name "CI Test" 2>/dev/null || true
+git config user.email "ci@test.local" 2>/dev/null || true
+
 git init -q
 git add -A
 git commit -m "Initial" -q
