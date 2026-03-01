@@ -189,6 +189,7 @@ RS_GIT_SNAP=1 RS_GIT_PUSH=1 ./scripts/run.sh --exp baseline python train.py
 | `user_prompt.txt` | 항상 | 필수 | 사용자 프롬프트 |
 | `last_assistant_message.md` | 항상 | 필수 | Agent 최종 응답 |
 | `run_summary.md` | run 존재 시 | 필수 | 최신 Run 요약 (5항목) |
+| `run_events.jsonl` | run 존재 시 | 권장 | Run 이벤트 매니페스트 |
 | `git_diff.patch` | 변경사항 있을 때 | 권장 | 코드 diff (없으면 미생성) |
 | `git_status.txt` | git repo | 선택 | git status 출력 |
 | `git_head.txt` | git repo | 선택 | 현재 커밋 SHA |
@@ -209,6 +210,7 @@ review_cycles/
 │   │   ├── user_prompt.txt             # [필수] 사용자 프롬프트
 │   │   ├── last_assistant_message.md   # [필수] Agent 응답
 │   │   ├── run_summary.md              # [필수] 최신 Run 요약
+│   │   ├── run_events.jsonl            # [권장] Run 이벤트 매니페스트
 │   │   ├── git_diff.patch              # [권장] 코드 diff (변경 시만)
 │   │   ├── transcript_tail.jsonl       # [권장] 대화 요약 (에러 우선)
 │   │   ├── run_logs.txt                # [권장] 실패 로그 (실패 시만)

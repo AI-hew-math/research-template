@@ -197,6 +197,50 @@ else
 fi
 echo "[run.sh] Run dir: $RUN_DIR"
 
+# --- Append to run_events.jsonl (for cycle-based collection) ---
+# Graceful: if no cycle is active (hooks not approved), just skip
+CYCLE_ID_FILE="$PROJECT_DIR/.claude/state/current_cycle_id"
+if [[ -f "$CYCLE_ID_FILE" ]]; then
+    CYCLE_NUM=$(cat "$CYCLE_ID_FILE" 2>/dev/null || echo "")
+    if [[ -n "$CYCLE_NUM" && "$CYCLE_NUM" =~ ^[0-9]+$ ]]; then
+        CYCLE_DIR=$(printf "cycle_%04d" "$CYCLE_NUM")
+        RUN_EVENTS_FILE="$PROJECT_DIR/review_cycles/$CYCLE_DIR/to_gpt/run_events.jsonl"
+
+        # Ensure directory exists
+        mkdir -p "$(dirname "$RUN_EVENTS_FILE")"
+
+        # Append JSONL entry using python for safe JSON escaping
+        python3 - "$RUN_EVENTS_FILE" "$RUN_ID" "$EXP_NAME" "$EXIT_CODE" "$DURATION" "$RUN_DIR" "$COMMAND_STR" << 'PYAPPEND' 2>/dev/null || true
+import sys
+import json
+import time
+
+events_path = sys.argv[1]
+run_id = sys.argv[2]
+exp = sys.argv[3]
+exit_code = int(sys.argv[4])
+duration = int(sys.argv[5])
+run_dir = sys.argv[6]
+cmd = sys.argv[7]
+
+entry = {
+    "ts": int(time.time()),
+    "run_id": run_id,
+    "exp": exp,
+    "cmd": cmd,
+    "run_dir": run_dir,
+    "exit_code": exit_code,
+    "duration": duration,
+    "stdout_path": f"{run_dir}/stdout.log",
+    "stderr_path": f"{run_dir}/stderr.log"
+}
+
+with open(events_path, 'a') as f:
+    f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+PYAPPEND
+    fi
+fi
+
 # --- Git snapshot (opt-in via RS_GIT_SNAP=1) ---
 if [[ "${RS_GIT_SNAP:-}" == "1" ]]; then
     GIT_SNAP_SCRIPT="$SCRIPT_DIR/git_snap.sh"

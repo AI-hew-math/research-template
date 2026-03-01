@@ -303,8 +303,8 @@ fi
 
 rm -f "$MOCK_TRANSCRIPT"
 
-# 4i: run_logs.txt generation test (DETERMINISTIC - only for FAILED latest run)
-# Create a fake failed run (latest by mtime)
+# 4i: run_logs.txt generation test (DETERMINISTIC - only for FAILED run)
+# Create a fake failed run with run_events.jsonl entry
 FAKE_FAIL_RUN="$PROJECT_DIR/runs/ci_fake_fail_run"
 mkdir -p "$FAKE_FAIL_RUN"
 
@@ -326,12 +326,16 @@ echo "  File 'test.py', line 1" >> "$FAKE_FAIL_RUN/stderr.log"
 # Create stdout
 echo "stdout content for ci test" > "$FAKE_FAIL_RUN/stdout.log"
 
-# Touch to ensure this is the latest run
-sleep 0.1
-touch "$FAKE_FAIL_RUN/run_card.md"
-
-# Trigger cycle_export Stop
+# Trigger UserPromptSubmit to create cycle
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_logs failed test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+# Create run_events.jsonl with the fake run entry
+mkdir -p "review_cycles/cycle_0006/to_gpt"
+cat > "review_cycles/cycle_0006/to_gpt/run_events.jsonl" << RUNEVENTS
+{"ts": $(date +%s), "run_id": "ci_fake_fail_run", "exp": "ci_fail", "cmd": "fake", "run_dir": "$FAKE_FAIL_RUN", "exit_code": 42, "duration": 1, "stdout_path": "$FAKE_FAIL_RUN/stdout.log", "stderr_path": "$FAKE_FAIL_RUN/stderr.log"}
+RUNEVENTS
+
+# Trigger Stop
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Checking logs"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 if [[ -f "review_cycles/cycle_0006/to_gpt/run_logs.txt" ]]; then
@@ -358,7 +362,7 @@ fi
 rm -rf "$FAKE_FAIL_RUN"
 
 # 4i-2: run_logs.txt should NOT be created for SUCCESS run
-# Create a fake success run (latest by mtime)
+# Create a fake success run with run_events.jsonl entry
 FAKE_SUCCESS_RUN="$PROJECT_DIR/runs/ci_fake_success_run"
 mkdir -p "$FAKE_SUCCESS_RUN"
 
@@ -373,12 +377,16 @@ RUNCARD
 
 echo "SUCCESS output" > "$FAKE_SUCCESS_RUN/stdout.log"
 
-# Touch to ensure this is the latest run
-sleep 0.1
-touch "$FAKE_SUCCESS_RUN/run_card.md"
-
-# Trigger cycle_export Stop
+# Trigger UserPromptSubmit to create cycle
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_logs success test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+# Create run_events.jsonl with the success run entry
+mkdir -p "review_cycles/cycle_0007/to_gpt"
+cat > "review_cycles/cycle_0007/to_gpt/run_events.jsonl" << RUNEVENTS
+{"ts": $(date +%s), "run_id": "ci_fake_success_run", "exp": "ci_success", "cmd": "fake", "run_dir": "$FAKE_SUCCESS_RUN", "exit_code": 0, "duration": 1, "stdout_path": "$FAKE_SUCCESS_RUN/stdout.log", "stderr_path": "$FAKE_SUCCESS_RUN/stderr.log"}
+RUNEVENTS
+
+# Trigger Stop
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Success check"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 if [[ ! -f "review_cycles/cycle_0007/to_gpt/run_logs.txt" ]]; then
@@ -481,8 +489,8 @@ fi
 
 rm -f "$MOCK_TRANSCRIPT_EMPTY"
 
-# 4m: run_summary.md with 5 items verification (DETERMINISTIC)
-# Create a fake run with complete structure
+# 4m: run_summary.md format verification (run_events-based)
+# Create a fake run with complete structure and run_events.jsonl entry
 FAKE_SUMMARY_RUN="$PROJECT_DIR/runs/ci_summary_test_run"
 mkdir -p "$FAKE_SUMMARY_RUN"
 
@@ -508,12 +516,16 @@ INFO: GPU memory usage 50%
 DEBUG: batch processing complete
 STDERR
 
-# Touch to ensure this is the most recent run
-sleep 0.1
-touch "$FAKE_SUMMARY_RUN/run_card.md"
-
-# Trigger cycle_export
+# Trigger UserPromptSubmit to create cycle
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_summary test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+# Create run_events.jsonl with the fake run entry
+mkdir -p "review_cycles/cycle_0010/to_gpt"
+cat > "review_cycles/cycle_0010/to_gpt/run_events.jsonl" << RUNEVENTS
+{"ts": $(date +%s), "run_id": "ci_summary_test_run", "exp": "summary_test", "cmd": "fake training", "run_dir": "$FAKE_SUMMARY_RUN", "exit_code": 0, "duration": 5, "stdout_path": "$FAKE_SUMMARY_RUN/stdout.log", "stderr_path": "$FAKE_SUMMARY_RUN/stderr.log"}
+RUNEVENTS
+
+# Trigger Stop
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Checking run summary"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 RUN_SUMMARY_FILE="review_cycles/cycle_0010/to_gpt/run_summary.md"
@@ -521,31 +533,27 @@ RUN_SUMMARY_FILE="review_cycles/cycle_0010/to_gpt/run_summary.md"
 if [[ -f "$RUN_SUMMARY_FILE" ]]; then
     pass "run_summary.md created"
 
-    # Verify 5 required items
-    if grep -q "## 1. Run ID" "$RUN_SUMMARY_FILE" && grep -q "ci_summary_test_run" "$RUN_SUMMARY_FILE"; then
+    # Verify key content (new format uses table and "## Run N:" sections)
+    if grep -q "ci_summary_test_run" "$RUN_SUMMARY_FILE"; then
         pass "run_summary.md contains Run ID"
     else
         fail "run_summary.md missing Run ID"
     fi
 
-    if grep -q "## 2. Run Card Path" "$RUN_SUMMARY_FILE"; then
-        pass "run_summary.md contains Run Card Path"
+    if grep -q "Run Dir\|run_dir" "$RUN_SUMMARY_FILE"; then
+        pass "run_summary.md contains Run Dir path"
     else
-        fail "run_summary.md missing Run Card Path"
+        fail "run_summary.md missing Run Dir"
     fi
 
-    if grep -q "## 3. Exit Code" "$RUN_SUMMARY_FILE"; then
-        if grep -q "SUCCESS" "$RUN_SUMMARY_FILE"; then
-            pass "run_summary.md contains Exit Code with SUCCESS"
-        else
-            fail "run_summary.md Exit Code should show SUCCESS for exit=0"
-        fi
+    if grep -q "SUCCESS" "$RUN_SUMMARY_FILE"; then
+        pass "run_summary.md contains SUCCESS status"
     else
-        fail "run_summary.md missing Exit Code section"
+        fail "run_summary.md should show SUCCESS for exit=0"
     fi
 
-    if grep -q "## 4. stdout" "$RUN_SUMMARY_FILE"; then
-        if grep -q "stdout line 25\|training progress" "$RUN_SUMMARY_FILE"; then
+    if grep -q "stdout\|stdout line" "$RUN_SUMMARY_FILE"; then
+        if grep -q "training progress" "$RUN_SUMMARY_FILE"; then
             pass "run_summary.md contains stdout tail"
         else
             fail "run_summary.md stdout section empty or truncated wrong"
@@ -554,10 +562,11 @@ if [[ -f "$RUN_SUMMARY_FILE" ]]; then
         fail "run_summary.md missing stdout section"
     fi
 
-    if grep -q "## 5. stderr" "$RUN_SUMMARY_FILE"; then
-        pass "run_summary.md contains stderr section"
+    # Table row verification (new format uses markdown table)
+    if grep -q "| 1 |" "$RUN_SUMMARY_FILE" && grep -q "summary_test" "$RUN_SUMMARY_FILE"; then
+        pass "run_summary.md contains run table entry"
     else
-        fail "run_summary.md missing stderr section"
+        fail "run_summary.md missing run table entry"
     fi
 else
     fail "run_summary.md should be created"
@@ -565,6 +574,95 @@ fi
 
 # Cleanup
 rm -rf "$FAKE_SUMMARY_RUN"
+
+# 4n: Multi-run cycle test (run_events.jsonl based)
+# Test: execute 2 runs in same cycle, verify all runs captured
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "multi-run cycle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+# Run 1: Success
+./scripts/run.sh --exp multi_success echo "Multi run success" > /dev/null 2>&1
+
+# Run 2: Failure
+./scripts/run.sh --exp multi_fail bash -c "exit 7" 2>/dev/null || true
+
+# Trigger Stop
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Multi-run test done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+# Verify run_events.jsonl exists and has 2 entries
+MULTI_RUN_EVENTS="review_cycles/cycle_0011/to_gpt/run_events.jsonl"
+if [[ -f "$MULTI_RUN_EVENTS" ]]; then
+    EVENT_COUNT=$(wc -l < "$MULTI_RUN_EVENTS" | tr -d ' ')
+    if [[ "$EVENT_COUNT" -eq 2 ]]; then
+        pass "run_events.jsonl contains 2 entries"
+    else
+        fail "run_events.jsonl should have 2 entries (got: $EVENT_COUNT)"
+    fi
+
+    # Verify both runs are recorded
+    if grep -q "multi_success" "$MULTI_RUN_EVENTS" && grep -q "multi_fail" "$MULTI_RUN_EVENTS"; then
+        pass "run_events.jsonl contains both experiment names"
+    else
+        fail "run_events.jsonl missing experiment names"
+    fi
+
+    # Verify exit codes are recorded
+    if grep -q '"exit_code": 0' "$MULTI_RUN_EVENTS" && grep -q '"exit_code": 7' "$MULTI_RUN_EVENTS"; then
+        pass "run_events.jsonl contains correct exit codes"
+    else
+        fail "run_events.jsonl missing correct exit codes"
+    fi
+else
+    fail "run_events.jsonl should be created for multi-run cycle"
+fi
+
+# Verify run_summary.md includes both runs
+MULTI_RUN_SUMMARY="review_cycles/cycle_0011/to_gpt/run_summary.md"
+if [[ -f "$MULTI_RUN_SUMMARY" ]]; then
+    if grep -q "multi_success" "$MULTI_RUN_SUMMARY" && grep -q "multi_fail" "$MULTI_RUN_SUMMARY"; then
+        pass "run_summary.md includes both runs"
+    else
+        fail "run_summary.md should include both runs"
+    fi
+
+    if grep -q "Total runs this cycle: 2" "$MULTI_RUN_SUMMARY"; then
+        pass "run_summary.md shows correct total count"
+    else
+        fail "run_summary.md should show total count: 2"
+    fi
+
+    if grep -q "Failed runs: 1" "$MULTI_RUN_SUMMARY"; then
+        pass "run_summary.md shows failed count"
+    else
+        fail "run_summary.md should show failed count"
+    fi
+else
+    fail "run_summary.md should exist for multi-run cycle"
+fi
+
+# Verify run_logs.txt is created (because one run failed)
+MULTI_RUN_LOGS="review_cycles/cycle_0011/to_gpt/run_logs.txt"
+if [[ -f "$MULTI_RUN_LOGS" ]]; then
+    pass "run_logs.txt created for multi-run cycle with failure"
+
+    # Should only contain the failed run
+    if grep -q "multi_fail" "$MULTI_RUN_LOGS"; then
+        pass "run_logs.txt contains failed run"
+    else
+        fail "run_logs.txt should contain failed run"
+    fi
+
+    # Should NOT contain success run details
+    if grep -q "Exit Code.*7\|exit_code.*7" "$MULTI_RUN_LOGS"; then
+        pass "run_logs.txt shows failed exit code"
+    else
+        fail "run_logs.txt should show failed exit code"
+    fi
+else
+    fail "run_logs.txt should exist when any run failed"
+fi
+
+# Cleanup multi-run test artifacts
+rm -rf "$PROJECT_DIR/runs/"*multi_*
 
 # --- Test 5: git_snap.sh ---
 info "Test 5: git_snap.sh"

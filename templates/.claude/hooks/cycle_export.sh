@@ -19,6 +19,7 @@
 #   │   ├── user_prompt.txt          # [필수] 사용자 프롬프트
 #   │   ├── last_assistant_message.md # [필수] Agent 최종 응답 (transcript fallback)
 #   │   ├── run_summary.md           # [필수] 최신 Run 요약 (5항목)
+#   │   ├── run_events.jsonl         # [권장] Run 이벤트 매니페스트
 #   │   ├── git_head.txt             # [조건] git repo일 때
 #   │   ├── git_status.txt           # [조건] git repo일 때
 #   │   ├── git_diff.patch           # [조건] git repo일 때
@@ -130,6 +131,10 @@ case "$HOOK_EVENT" in
         fi
         CURRENT_CYCLE=$((CURRENT_CYCLE + 1))
         echo "$CURRENT_CYCLE" > "$CYCLE_FILE"
+
+        # Record cycle metadata for run.sh to use
+        echo "$CURRENT_CYCLE" > "$STATE_DIR/current_cycle_id"
+        date +%s > "$STATE_DIR/current_cycle_start_ts"
         ;;
     "SessionStart")
         # Initialize only if no cycle file exists (don't increment)
@@ -434,166 +439,192 @@ for i, line in enumerate(sys.stdin):
         fi
     fi
 
-    # --- Generate run_summary.md AND run_logs.txt (combined, latest run only) ---
-    # run_summary.md: always generated for most recent run
-    # run_logs.txt: only generated if latest run FAILED (exit_code != 0)
+    # --- Generate run_summary.md AND run_logs.txt from run_events.jsonl ---
+    # run_events.jsonl contains all runs executed during this cycle
+    # run_summary.md: always generated (lists all runs with stdout tail)
+    # run_logs.txt: only generated if ANY run FAILED
     RUN_SUMMARY_MISSING=""
-    RUNS_DIR="$CWD/runs"
+    RUN_EVENTS_FILE="$TO_GPT/run_events.jsonl"
+    RS_RUNS_MAX="${RS_RUNS_MAX:-10}"
+    RS_RUN_LOGS_MAX_BYTES="${RS_RUN_LOGS_MAX_BYTES:-51200}"
 
-    if [[ -d "$RUNS_DIR" ]]; then
-        python3 - "$RUNS_DIR" "$TO_GPT/run_summary.md" "$TO_GPT/run_logs.txt" << 'PYRUNSUMMARY' 2>/dev/null || true
+    if [[ -f "$RUN_EVENTS_FILE" && -s "$RUN_EVENTS_FILE" ]]; then
+        python3 - "$RUN_EVENTS_FILE" "$TO_GPT/run_summary.md" "$TO_GPT/run_logs.txt" "$RS_RUNS_MAX" "$RS_RUN_LOGS_MAX_BYTES" << 'PYRUNEVENTS' 2>/dev/null || true
 import sys
-import re
+import json
 from pathlib import Path
 from datetime import datetime
 
-runs_dir = Path(sys.argv[1])
+events_path = Path(sys.argv[1])
 summary_path = Path(sys.argv[2])
 runlogs_path = Path(sys.argv[3])
+max_runs = int(sys.argv[4])
+max_log_bytes = int(sys.argv[5])
 
-EXIT_PATTERNS = [
-    r'Exit Code[:\s|]+(\d+)',
-    r'exit[=:\s]+(\d+)',
-    r'\*\*Exit Code\*\*\s*\|\s*(\d+)',
-]
-
-def parse_exit_code(run_card_path):
+def read_tail(path, n_lines):
+    """Read last n lines from file."""
     try:
-        content = run_card_path.read_text()
-        for pattern in EXIT_PATTERNS:
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                return int(match.group(1))
+        p = Path(path)
+        if p.exists():
+            content = p.read_text()
+            lines = content.splitlines()[-n_lines:]
+            return lines
     except:
         pass
-    return None  # Unknown
+    return None
 
-def get_mtime(path):
-    try:
-        return path.stat().st_mtime
-    except:
-        return 0
+# Load all run events
+runs = []
+try:
+    with open(events_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    runs.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+except:
+    pass
 
-# Find most recent run_card.md by mtime
-run_cards = list(runs_dir.glob('*/run_card.md'))
-if not run_cards:
-    sys.exit(0)  # No runs
+if not runs:
+    sys.exit(0)  # No runs in this cycle
 
-run_cards.sort(key=get_mtime, reverse=True)
-latest_rc = run_cards[0]
-run_dir = latest_rc.parent
-run_id = run_dir.name
-exit_code = parse_exit_code(latest_rc)
+# Limit to most recent RS_RUNS_MAX runs (by ts)
+runs.sort(key=lambda r: r.get('ts', 0), reverse=True)
+runs = runs[:max_runs]
+runs.reverse()  # Chronological order for display
 
-# ========== Generate run_summary.md (always) ==========
+# Separate failed runs
+failed_runs = [r for r in runs if r.get('exit_code', 0) != 0]
+
+# ========== Generate run_summary.md ==========
 lines = []
 lines.append("# Run Summary (auto-generated)")
 lines.append(f"Generated: {datetime.now().isoformat()}")
-lines.append("")
-lines.append("## 1. Run ID")
-lines.append(f"`{run_id}`")
-lines.append("")
-lines.append("## 2. Run Card Path")
-lines.append(f"`runs/{run_id}/run_card.md`")
-lines.append("")
-lines.append("## 3. Exit Code")
-if exit_code is not None:
-    status = "SUCCESS" if exit_code == 0 else "FAILED"
-    lines.append(f"**{exit_code}** ({status})")
-else:
-    lines.append("Unknown (parsing failed)")
+lines.append(f"Total runs this cycle: {len(runs)}")
+if failed_runs:
+    lines.append(f"**Failed runs: {len(failed_runs)}**")
 lines.append("")
 
-# stdout tail 20
-stdout_path = run_dir / "stdout.log"
-lines.append("## 4. stdout (last 20 lines)")
-if stdout_path.exists():
-    try:
-        content = stdout_path.read_text()
-        stdout_lines = content.splitlines()[-20:]
+# Run table
+lines.append("## Runs")
+lines.append("")
+lines.append("| # | Run ID | Exp | Exit | Duration | Status |")
+lines.append("|---|--------|-----|------|----------|--------|")
+
+for i, r in enumerate(runs, 1):
+    run_id = r.get('run_id', 'unknown')
+    exp = r.get('exp', '')
+    exit_code = r.get('exit_code', '?')
+    duration = r.get('duration', '?')
+    status = "SUCCESS" if exit_code == 0 else f"**FAILED**"
+    # Truncate long run_id for table
+    run_id_short = run_id[:40] + "..." if len(run_id) > 43 else run_id
+    lines.append(f"| {i} | `{run_id_short}` | {exp} | {exit_code} | {duration}s | {status} |")
+
+lines.append("")
+
+# Per-run details (stdout tail 20 for each)
+for i, r in enumerate(runs, 1):
+    run_id = r.get('run_id', 'unknown')
+    exp = r.get('exp', '')
+    exit_code = r.get('exit_code', 0)
+    run_dir = r.get('run_dir', '')
+    status = "SUCCESS" if exit_code == 0 else "FAILED"
+
+    lines.append(f"## Run {i}: {exp} ({status})")
+    lines.append(f"- **Run ID**: `{run_id}`")
+    lines.append(f"- **Exit Code**: {exit_code}")
+    lines.append(f"- **Run Dir**: `{run_dir}`")
+    lines.append("")
+
+    # stdout tail 20
+    stdout_path = r.get('stdout_path', '')
+    lines.append("### stdout (last 20 lines)")
+    stdout_lines = read_tail(stdout_path, 20)
+    if stdout_lines is not None:
         lines.append("```")
         lines.extend(stdout_lines)
         lines.append("```")
-    except Exception as e:
-        lines.append(f"(error: {e})")
-else:
-    lines.append("(no stdout.log)")
-lines.append("")
+    else:
+        lines.append("(no stdout.log)")
+    lines.append("")
 
-# stderr tail 50
-stderr_path = run_dir / "stderr.log"
-lines.append("## 5. stderr (last 50 lines)")
-if stderr_path.exists():
-    try:
-        content = stderr_path.read_text()
-        stderr_lines = content.splitlines()[-50:]
-        if stderr_lines:
+    # stderr tail 50 for FAILED runs only
+    if exit_code != 0:
+        stderr_path = r.get('stderr_path', '')
+        lines.append("### stderr (last 50 lines)")
+        stderr_lines = read_tail(stderr_path, 50)
+        if stderr_lines is not None and stderr_lines:
             lines.append("```")
             lines.extend(stderr_lines)
             lines.append("```")
         else:
-            lines.append("(empty)")
-    except Exception as e:
-        lines.append(f"(error: {e})")
-else:
-    lines.append("(no stderr.log)")
+            lines.append("(empty or no stderr.log)")
+        lines.append("")
 
 summary_path.write_text('\n'.join(lines))
 
-# ========== Generate run_logs.txt (only if FAILED) ==========
-if exit_code is not None and exit_code != 0:
+# ========== Generate run_logs.txt (only if ANY failed) ==========
+if failed_runs:
     log_lines = []
-    log_lines.append("# Failed Run Log (auto-extracted)")
+    log_lines.append("# Failed Run Logs (auto-extracted)")
     log_lines.append(f"Generated: {datetime.now().isoformat()}")
-    log_lines.append("")
-    log_lines.append(f"## Run ID")
-    log_lines.append(f"`{run_id}`")
-    log_lines.append("")
-    log_lines.append(f"## Exit Code")
-    log_lines.append(f"**{exit_code}** (FAILED)")
+    log_lines.append(f"Failed runs: {len(failed_runs)} of {len(runs)}")
     log_lines.append("")
 
-    # stdout tail 20
-    log_lines.append("## stdout (last 20 lines)")
-    if stdout_path.exists():
-        try:
-            content = stdout_path.read_text()
-            stdout_lines = content.splitlines()[-20:]
+    for r in failed_runs:
+        run_id = r.get('run_id', 'unknown')
+        exp = r.get('exp', '')
+        exit_code = r.get('exit_code', 0)
+        run_dir = r.get('run_dir', '')
+
+        log_lines.append(f"## {exp}: {run_id}")
+        log_lines.append(f"- Exit Code: **{exit_code}**")
+        log_lines.append(f"- Run Dir: `{run_dir}`")
+        log_lines.append("")
+
+        # stdout tail 20
+        stdout_path = r.get('stdout_path', '')
+        log_lines.append("### stdout (last 20 lines)")
+        stdout_lines = read_tail(stdout_path, 20)
+        if stdout_lines is not None:
             log_lines.append("```")
             log_lines.extend(stdout_lines)
             log_lines.append("```")
-        except Exception as e:
-            log_lines.append(f"(error: {e})")
-    else:
-        log_lines.append("(no stdout.log)")
-    log_lines.append("")
+        else:
+            log_lines.append("(no stdout.log)")
+        log_lines.append("")
 
-    # stderr tail 50
-    log_lines.append("## stderr (last 50 lines)")
-    if stderr_path.exists():
-        try:
-            content = stderr_path.read_text()
-            stderr_lines = content.splitlines()[-50:]
-            if stderr_lines:
-                log_lines.append("```")
-                log_lines.extend(stderr_lines)
-                log_lines.append("```")
-            else:
-                log_lines.append("(empty)")
-        except Exception as e:
-            log_lines.append(f"(error: {e})")
-    else:
-        log_lines.append("(no stderr.log)")
+        # stderr tail 50
+        stderr_path = r.get('stderr_path', '')
+        log_lines.append("### stderr (last 50 lines)")
+        stderr_lines = read_tail(stderr_path, 50)
+        if stderr_lines is not None and stderr_lines:
+            log_lines.append("```")
+            log_lines.extend(stderr_lines)
+            log_lines.append("```")
+        else:
+            log_lines.append("(empty or no stderr.log)")
+        log_lines.append("")
 
-    runlogs_path.write_text('\n'.join(log_lines))
-# Note: if exit_code == 0 (SUCCESS), run_logs.txt is NOT created
-PYRUNSUMMARY
+    # Check size limit
+    output = '\n'.join(log_lines)
+    if len(output.encode('utf-8')) > max_log_bytes:
+        output_bytes = output.encode('utf-8')[:max_log_bytes]
+        output = output_bytes.decode('utf-8', errors='ignore')
+        output += f"\n\n... (truncated at {max_log_bytes} bytes) ..."
+
+    runlogs_path.write_text(output)
+# Note: if no failed runs, run_logs.txt is NOT created
+PYRUNEVENTS
 
         if [[ ! -s "$TO_GPT/run_summary.md" ]]; then
-            RUN_SUMMARY_MISSING="no runs found or parse failed"
+            RUN_SUMMARY_MISSING="no run events in this cycle"
         fi
     else
-        RUN_SUMMARY_MISSING="runs/ directory not found"
+        RUN_SUMMARY_MISSING="no runs executed this cycle"
     fi
 fi
 
@@ -698,6 +729,9 @@ echo "| run_summary.md | $(file_size_bytes "$TO_GPT/run_summary.md")B | 필수 |
 elif [[ -n "$RUN_SUMMARY_MISSING" ]]; then
 echo "| ~~run_summary.md~~ | MISSING | 필수 | ${RUN_SUMMARY_MISSING} |"
 fi)
+$(if [[ -f "$TO_GPT/run_events.jsonl" ]]; then
+echo "| run_events.jsonl | $(file_size_bytes "$TO_GPT/run_events.jsonl")B | 권장 | Run 이벤트 매니페스트 |"
+fi)
 $(if [[ -f "$TO_GPT/git_diff.patch" ]]; then
 echo "| git_diff.patch | $(file_size_bytes "$TO_GPT/git_diff.patch")B | 권장 | 코드 변경사항 |"
 fi)
@@ -772,6 +806,9 @@ $(if [[ -f "$TO_GPT/run_summary.md" ]]; then
 echo "| run_summary.md | $(file_size_bytes "$TO_GPT/run_summary.md")B | 필수 | 최신 Run 요약 |"
 elif [[ -n "$RUN_SUMMARY_MISSING" ]]; then
 echo "| ~~run_summary.md~~ | MISSING | 필수 | ${RUN_SUMMARY_MISSING} |"
+fi)
+$(if [[ -f "$TO_GPT/run_events.jsonl" ]]; then
+echo "| run_events.jsonl | $(file_size_bytes "$TO_GPT/run_events.jsonl")B | 권장 | Run 매니페스트 |"
 fi)
 $(if [[ -f "$TO_GPT/git_diff.patch" ]]; then
 echo "| git_diff.patch | $(file_size_bytes "$TO_GPT/git_diff.patch")B | 권장 | 코드 diff |"
