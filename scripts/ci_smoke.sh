@@ -2,7 +2,7 @@
 # ci_smoke.sh - CI-grade smoke test for research-template
 # Usage: ./scripts/ci_smoke.sh
 #
-# Tests (non-interactive, no claude required):
+# Tests (non-interactive, no agent CLI required):
 # 1. create_project.sh → project structure
 # 2. run.sh success/fail
 # 3. draft_memo.py
@@ -164,7 +164,7 @@ else
 fi
 
 # 4b: Stop → last_assistant_message.md in same cycle
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Test response from Claude"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Test response from agent"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 if [[ -f "review_cycles/cycle_0001/to_gpt/last_assistant_message.md" ]]; then
     pass "Stop creates last_assistant_message.md"
