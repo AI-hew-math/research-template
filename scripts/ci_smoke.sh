@@ -370,6 +370,126 @@ else
     fail "packet.md should include priority (필수/권장/선택)"
 fi
 
+# 4l: Stop without last_assistant_message → transcript recovery (DETERMINISTIC)
+# Create mock transcript with assistant messages
+MOCK_TRANSCRIPT_RECOVERY=$(mktemp)
+cat > "$MOCK_TRANSCRIPT_RECOVERY" << 'MOCKJSONL'
+{"type": "message", "role": "user", "content": "Please help me"}
+{"type": "message", "role": "assistant", "content": "I'll help you with that task."}
+{"type": "message", "role": "user", "content": "Thanks, continue"}
+{"type": "message", "role": "assistant", "content": "This is the final assistant response from transcript."}
+MOCKJSONL
+
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "transcript recovery test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+# Stop WITHOUT last_assistant_message, but WITH transcript_path
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "transcript_path": "'"$MOCK_TRANSCRIPT_RECOVERY"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+if [[ -f "review_cycles/cycle_0007/to_gpt/last_assistant_message.md" ]]; then
+    RECOVERED_MSG=$(cat "review_cycles/cycle_0007/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
+    if echo "$RECOVERED_MSG" | grep -q "final assistant response from transcript"; then
+        pass "Stop recovers last_assistant_message from transcript (fallback)"
+    else
+        fail "transcript recovery failed: got '$RECOVERED_MSG'"
+    fi
+else
+    fail "Stop should create last_assistant_message.md via transcript fallback"
+fi
+
+# Check that packet.md does NOT show MISSING for this case
+if grep -q "MISSING.*last_assistant_message" "review_cycles/cycle_0007/to_gpt/packet.md" 2>/dev/null; then
+    fail "packet.md should not show MISSING when transcript recovery succeeds"
+else
+    pass "packet.md shows no MISSING when transcript recovery succeeds"
+fi
+
+rm -f "$MOCK_TRANSCRIPT_RECOVERY"
+
+# 4m: run_summary.md with 5 items verification (DETERMINISTIC)
+# Create a fake run with complete structure
+FAKE_SUMMARY_RUN="$PROJECT_DIR/runs/ci_summary_test_run"
+mkdir -p "$FAKE_SUMMARY_RUN"
+
+# Create run_card.md with exit code
+cat > "$FAKE_SUMMARY_RUN/run_card.md" << 'RUNCARD'
+# Run Card: ci_summary_test_run
+
+| Field | Value |
+|-------|-------|
+| **Exit Code** | 0 |
+| **Duration** | 5s |
+RUNCARD
+
+# Create stdout.log with more than 20 lines
+for i in $(seq 1 25); do
+    echo "stdout line $i: training progress epoch $i"
+done > "$FAKE_SUMMARY_RUN/stdout.log"
+
+# Create stderr.log with warnings
+cat > "$FAKE_SUMMARY_RUN/stderr.log" << 'STDERR'
+WARNING: learning rate seems high
+INFO: GPU memory usage 50%
+DEBUG: batch processing complete
+STDERR
+
+# Touch to ensure this is the most recent run
+sleep 0.1
+touch "$FAKE_SUMMARY_RUN/run_card.md"
+
+# Trigger cycle_export
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_summary test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Checking run summary"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+RUN_SUMMARY_FILE="review_cycles/cycle_0008/to_gpt/run_summary.md"
+
+if [[ -f "$RUN_SUMMARY_FILE" ]]; then
+    pass "run_summary.md created"
+
+    # Verify 5 required items
+    if grep -q "## 1. Run ID" "$RUN_SUMMARY_FILE" && grep -q "ci_summary_test_run" "$RUN_SUMMARY_FILE"; then
+        pass "run_summary.md contains Run ID"
+    else
+        fail "run_summary.md missing Run ID"
+    fi
+
+    if grep -q "## 2. Run Card Path" "$RUN_SUMMARY_FILE"; then
+        pass "run_summary.md contains Run Card Path"
+    else
+        fail "run_summary.md missing Run Card Path"
+    fi
+
+    if grep -q "## 3. Exit Code" "$RUN_SUMMARY_FILE"; then
+        if grep -q "SUCCESS" "$RUN_SUMMARY_FILE"; then
+            pass "run_summary.md contains Exit Code with SUCCESS"
+        else
+            fail "run_summary.md Exit Code should show SUCCESS for exit=0"
+        fi
+    else
+        fail "run_summary.md missing Exit Code section"
+    fi
+
+    if grep -q "## 4. stdout" "$RUN_SUMMARY_FILE"; then
+        if grep -q "stdout line 25\|training progress" "$RUN_SUMMARY_FILE"; then
+            pass "run_summary.md contains stdout tail"
+        else
+            fail "run_summary.md stdout section empty or truncated wrong"
+        fi
+    else
+        fail "run_summary.md missing stdout section"
+    fi
+
+    if grep -q "## 5. stderr" "$RUN_SUMMARY_FILE"; then
+        pass "run_summary.md contains stderr section"
+    else
+        fail "run_summary.md missing stderr section"
+    fi
+else
+    fail "run_summary.md should be created"
+fi
+
+# Cleanup
+rm -rf "$FAKE_SUMMARY_RUN"
+
 # --- Test 5: git_snap.sh ---
 info "Test 5: git_snap.sh"
 

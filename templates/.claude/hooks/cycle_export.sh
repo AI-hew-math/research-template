@@ -17,19 +17,22 @@
 #   │   ├── UPLOAD_LIST.md           # [필수] 업로드 가이드
 #   │   ├── packet.md                # [필수] 메타데이터 + 파일 크기
 #   │   ├── user_prompt.txt          # [필수] 사용자 프롬프트
-#   │   ├── last_assistant_message.md # [필수] Agent 최종 응답
+#   │   ├── last_assistant_message.md # [필수] Agent 최종 응답 (transcript fallback)
+#   │   ├── run_summary.md           # [필수] 최신 Run 요약 (5항목)
 #   │   ├── git_head.txt             # [조건] git repo일 때
 #   │   ├── git_status.txt           # [조건] git repo일 때
 #   │   ├── git_diff.patch           # [조건] git repo일 때
 #   │   ├── claude_transcript.jsonl  # [조건] transcript_path 제공 시 (전체 보관용)
 #   │   ├── transcript_tail.jsonl    # [권장] 업로드용 요약본 (에러 우선 추출)
-#   │   └── run_logs.txt             # [조건] 실패한 run이 있을 때
+#   │   ├── run_logs.txt             # [조건] 실패한 run이 있을 때
+#   │   └── hook_input_stop.json     # [디버그] RS_HOOK_DEBUG=1 시
 #   ├── from_gpt/
 #   └── to_claude/
 #
 # 환경변수:
 #   RS_TRANSCRIPT_TAIL_LINES=400     # transcript_tail 기본 라인 수
 #   RS_RUN_LOG_MAX_BYTES=51200       # run_logs.txt 최대 크기 (50KB)
+#   RS_HOOK_DEBUG=1                  # Stop hook 입력 JSON 저장
 
 set -e
 
@@ -173,9 +176,69 @@ if [[ "$HOOK_EVENT" == "UserPromptSubmit" && -s "$PROMPT_FILE" ]]; then
     cp "$PROMPT_FILE" "$TO_GPT/user_prompt.txt"
 fi
 
+# --- Debug option: save hook input JSON ---
+if [[ "${RS_HOOK_DEBUG:-}" == "1" && "$HOOK_EVENT" == "Stop" ]]; then
+    cp "$TMPFILE" "$TO_GPT/hook_input_stop.json" 2>/dev/null || true
+fi
+
 # --- Save last_assistant_message.md on Stop (multiline-safe) ---
-if [[ "$HOOK_EVENT" == "Stop" && -s "$ASSISTANT_FILE" ]]; then
-    cp "$ASSISTANT_FILE" "$TO_GPT/last_assistant_message.md"
+LAST_ASSISTANT_MISSING=""
+if [[ "$HOOK_EVENT" == "Stop" ]]; then
+    if [[ -s "$ASSISTANT_FILE" ]]; then
+        cp "$ASSISTANT_FILE" "$TO_GPT/last_assistant_message.md"
+    else
+        # Fallback: extract from transcript if available
+        if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
+            python3 - "$TRANSCRIPT_PATH" "$TO_GPT/last_assistant_message.md" << 'PYEXTRACT_ASSISTANT' 2>/dev/null || true
+import sys
+import json
+
+transcript_path = sys.argv[1]
+output_path = sys.argv[2]
+
+# Read transcript and find last assistant message
+last_assistant = None
+try:
+    with open(transcript_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                # Look for assistant/model messages
+                role = obj.get('role', '') or obj.get('type', '')
+                if role in ('assistant', 'model', 'response'):
+                    content = obj.get('content', '') or obj.get('message', '') or obj.get('text', '')
+                    if isinstance(content, list):
+                        # Handle content blocks
+                        text_parts = []
+                        for block in content:
+                            if isinstance(block, dict) and block.get('type') == 'text':
+                                text_parts.append(block.get('text', ''))
+                            elif isinstance(block, str):
+                                text_parts.append(block)
+                        content = '\n'.join(text_parts)
+                    if content:
+                        last_assistant = content
+            except json.JSONDecodeError:
+                continue
+except Exception:
+    pass
+
+if last_assistant:
+    with open(output_path, 'w') as f:
+        f.write(last_assistant)
+PYEXTRACT_ASSISTANT
+
+            # Check if extraction succeeded
+            if [[ ! -s "$TO_GPT/last_assistant_message.md" ]]; then
+                LAST_ASSISTANT_MISSING="transcript parse failed"
+            fi
+        else
+            LAST_ASSISTANT_MISSING="Stop payload missing last_assistant_message"
+        fi
+    fi
 fi
 
 # --- Handle stop_hook_active (relaxed policy) ---
@@ -429,6 +492,116 @@ if len(output.encode('utf-8')) > max_bytes:
 output_path.write_text(output)
 PYRUNLOGS
     fi
+
+    # --- Generate run_summary.md (most recent run, success or fail) ---
+    # Different from run_logs.txt: this covers ALL runs, not just failures
+    RUN_SUMMARY_MISSING=""
+    if [[ -d "$RUNS_DIR" ]]; then
+        python3 - "$RUNS_DIR" "$TO_GPT/run_summary.md" << 'PYRUNSUMMARY' 2>/dev/null || true
+import sys
+import re
+from pathlib import Path
+from datetime import datetime
+
+runs_dir = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+
+EXIT_PATTERNS = [
+    r'Exit Code[:\s|]+(\d+)',
+    r'exit[=:\s]+(\d+)',
+    r'\*\*Exit Code\*\*\s*\|\s*(\d+)',
+]
+
+def parse_exit_code(run_card_path):
+    try:
+        content = run_card_path.read_text()
+        for pattern in EXIT_PATTERNS:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+    except:
+        pass
+    return None  # Unknown
+
+def get_mtime(path):
+    try:
+        return path.stat().st_mtime
+    except:
+        return 0
+
+# Find most recent run_card.md by mtime
+run_cards = list(runs_dir.glob('*/run_card.md'))
+if not run_cards:
+    sys.exit(0)  # No runs
+
+run_cards.sort(key=get_mtime, reverse=True)
+latest_rc = run_cards[0]
+run_dir = latest_rc.parent
+run_id = run_dir.name
+exit_code = parse_exit_code(latest_rc)
+
+# Build summary
+lines = []
+lines.append("# Run Summary (auto-generated)")
+lines.append(f"Generated: {datetime.now().isoformat()}")
+lines.append("")
+lines.append("## 1. Run ID")
+lines.append(f"`{run_id}`")
+lines.append("")
+lines.append("## 2. Run Card Path")
+lines.append(f"`runs/{run_id}/run_card.md`")
+lines.append("")
+lines.append("## 3. Exit Code")
+if exit_code is not None:
+    status = "SUCCESS" if exit_code == 0 else "FAILED"
+    lines.append(f"**{exit_code}** ({status})")
+else:
+    lines.append("Unknown (parsing failed)")
+lines.append("")
+
+# stdout tail 20
+stdout_path = run_dir / "stdout.log"
+lines.append("## 4. stdout (last 20 lines)")
+if stdout_path.exists():
+    try:
+        content = stdout_path.read_text()
+        stdout_lines = content.splitlines()[-20:]
+        lines.append("```")
+        lines.extend(stdout_lines)
+        lines.append("```")
+    except Exception as e:
+        lines.append(f"(error: {e})")
+else:
+    lines.append("(no stdout.log)")
+lines.append("")
+
+# stderr tail 50
+stderr_path = run_dir / "stderr.log"
+lines.append("## 5. stderr (last 50 lines)")
+if stderr_path.exists():
+    try:
+        content = stderr_path.read_text()
+        stderr_lines = content.splitlines()[-50:]
+        if stderr_lines:
+            lines.append("```")
+            lines.extend(stderr_lines)
+            lines.append("```")
+        else:
+            lines.append("(empty)")
+    except Exception as e:
+        lines.append(f"(error: {e})")
+else:
+    lines.append("(no stderr.log)")
+
+output_path.write_text('\n'.join(lines))
+PYRUNSUMMARY
+
+        if [[ ! -s "$TO_GPT/run_summary.md" ]]; then
+            RUN_SUMMARY_MISSING="no runs found or parse failed"
+        fi
+    else
+        RUN_SUMMARY_MISSING="runs/ directory not found"
+    fi
 fi
 
 # --- Helper: get file size in bytes ---
@@ -481,6 +654,17 @@ else
         [[ -f "$f" ]] && TOTAL_SIZE=$((TOTAL_SIZE + $(file_size_bytes "$f")))
     done
 
+    # Build MISSING warnings section
+    MISSING_SECTION=""
+    if [[ -n "$LAST_ASSISTANT_MISSING" ]]; then
+        MISSING_SECTION="${MISSING_SECTION}
+> **MISSING: last_assistant_message.md** - ${LAST_ASSISTANT_MISSING}"
+    fi
+    if [[ -n "$RUN_SUMMARY_MISSING" ]]; then
+        MISSING_SECTION="${MISSING_SECTION}
+> **MISSING: run_summary.md** - ${RUN_SUMMARY_MISSING}"
+    fi
+
     cat > "$TO_GPT/packet.md" << EOF
 # Review Packet: $CYCLE_ID
 
@@ -495,6 +679,7 @@ else
 | **Git HEAD** | ${GIT_HEAD:-N/A} |
 | **Transcript** | ${TRANSCRIPT_PATH:-N/A} |
 | **Total Size** | ~${TOTAL_SIZE} bytes |
+${MISSING_SECTION}
 
 ## Context
 
@@ -512,6 +697,13 @@ echo "| user_prompt.txt | $(file_size_bytes "$TO_GPT/user_prompt.txt")B | 필수
 fi)
 $(if [[ -f "$TO_GPT/last_assistant_message.md" ]]; then
 echo "| last_assistant_message.md | $(file_size_bytes "$TO_GPT/last_assistant_message.md")B | 필수 | Agent 최종 응답 |"
+elif [[ -n "$LAST_ASSISTANT_MISSING" ]]; then
+echo "| ~~last_assistant_message.md~~ | MISSING | 필수 | ${LAST_ASSISTANT_MISSING} |"
+fi)
+$(if [[ -f "$TO_GPT/run_summary.md" ]]; then
+echo "| run_summary.md | $(file_size_bytes "$TO_GPT/run_summary.md")B | 필수 | 최신 Run 요약 |"
+elif [[ -n "$RUN_SUMMARY_MISSING" ]]; then
+echo "| ~~run_summary.md~~ | MISSING | 필수 | ${RUN_SUMMARY_MISSING} |"
 fi)
 $(if [[ -f "$TO_GPT/git_diff.patch" ]]; then
 echo "| git_diff.patch | $(file_size_bytes "$TO_GPT/git_diff.patch")B | 권장 | 코드 변경사항 |"
@@ -532,7 +724,7 @@ fi)
 
 ## 업로드 우선순위 설명
 
-- **필수**: GPT 검토에 반드시 필요
+- **필수**: GPT 검토에 반드시 필요 (MISSING 표시 시 주의)
 - **권장**: 코드 품질/에러 분석에 도움
 - **선택**: 상세 분석 시 참조
 - **보관용**: 로컬 보관 전용 (업로드 비권장)
@@ -540,22 +732,34 @@ EOF
 
     cat > "$TO_GPT/UPLOAD_LIST.md" << EOF
 # GPT Upload Guide: $CYCLE_ID
+${MISSING_SECTION}
 
 ## 빠른 업로드 (권장)
 
 다음 순서로 업로드:
 
 1. **packet.md** (메타데이터)
-2. **user_prompt.txt** (프롬프트)
-3. **last_assistant_message.md** (Agent 응답)
+$(if [[ -f "$TO_GPT/user_prompt.txt" ]]; then
+echo "2. **user_prompt.txt** (프롬프트)"
+fi)
+$(if [[ -f "$TO_GPT/last_assistant_message.md" ]]; then
+echo "3. **last_assistant_message.md** (Agent 응답)"
+elif [[ -n "$LAST_ASSISTANT_MISSING" ]]; then
+echo "3. ~~last_assistant_message.md~~ (MISSING: ${LAST_ASSISTANT_MISSING})"
+fi)
+$(if [[ -f "$TO_GPT/run_summary.md" ]]; then
+echo "4. **run_summary.md** (최신 Run 요약)"
+elif [[ -n "$RUN_SUMMARY_MISSING" ]]; then
+echo "4. ~~run_summary.md~~ (MISSING: ${RUN_SUMMARY_MISSING})"
+fi)
 $(if [[ -f "$TO_GPT/git_diff.patch" ]]; then
-echo "4. **git_diff.patch** (코드 변경)"
+echo "5. **git_diff.patch** (코드 변경)"
 fi)
 $(if [[ -f "$TO_GPT/transcript_tail.jsonl" ]]; then
-echo "5. **transcript_tail.jsonl** (대화 요약, 에러 우선)"
+echo "6. **transcript_tail.jsonl** (대화 요약, 에러 우선)"
 fi)
 $(if [[ -f "$TO_GPT/run_logs.txt" ]]; then
-echo "6. **run_logs.txt** (실패 로그)"
+echo "7. **run_logs.txt** (실패 로그)"
 fi)
 
 ## 파일 상세
@@ -568,6 +772,13 @@ echo "| user_prompt.txt | $(file_size_bytes "$TO_GPT/user_prompt.txt")B | 필수
 fi)
 $(if [[ -f "$TO_GPT/last_assistant_message.md" ]]; then
 echo "| last_assistant_message.md | $(file_size_bytes "$TO_GPT/last_assistant_message.md")B | 필수 | Agent 응답 |"
+elif [[ -n "$LAST_ASSISTANT_MISSING" ]]; then
+echo "| ~~last_assistant_message.md~~ | MISSING | 필수 | ${LAST_ASSISTANT_MISSING} |"
+fi)
+$(if [[ -f "$TO_GPT/run_summary.md" ]]; then
+echo "| run_summary.md | $(file_size_bytes "$TO_GPT/run_summary.md")B | 필수 | 최신 Run 요약 |"
+elif [[ -n "$RUN_SUMMARY_MISSING" ]]; then
+echo "| ~~run_summary.md~~ | MISSING | 필수 | ${RUN_SUMMARY_MISSING} |"
 fi)
 $(if [[ -f "$TO_GPT/git_diff.patch" ]]; then
 echo "| git_diff.patch | $(file_size_bytes "$TO_GPT/git_diff.patch")B | 권장 | 코드 diff |"
@@ -587,7 +798,7 @@ fi)
 1. **코드 품질**: 버그, 보안 취약점, 개선점이 있는가?
 2. **설계 결정**: 현재 접근 방식의 장단점은 무엇인가?
 3. **누락된 부분**: 고려하지 않은 edge case나 요구사항이 있는가?
-4. **에러 분석**: transcript_tail/run_logs에 문제가 보이는가?
+4. **에러 분석**: run_summary/transcript_tail/run_logs에 문제가 보이는가?
 
 ## GPT 응답 저장
 

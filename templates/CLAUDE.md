@@ -30,6 +30,38 @@
 2. 분석은 `draft_memo.py`로 → Experiment Memo 자동
 3. "명령어만"이 없으면 무조건 실행
 
+### 실험 실행 응답 스키마 (필수)
+
+**"실험 돌려줘" 트리거 시, 최종 응답에 아래 5개 항목을 반드시 포함:**
+
+```markdown
+## 실험 결과
+
+### 1. Run ID
+`YYYYMMDD_HHMMSS_실험명_호스트_gitsha`
+
+### 2. Run Card 경로
+`runs/<RUN_ID>/run_card.md`
+
+### 3. Exit Code
+**0** (SUCCESS) 또는 **N** (FAILED)
+
+### 4. stdout 요약 (마지막 20줄)
+\`\`\`
+[stdout tail 20 lines]
+\`\`\`
+
+### 5. stderr 요약 (마지막 50줄, 있으면)
+\`\`\`
+[stderr tail 50 lines]
+\`\`\`
+```
+
+**이 형식은 사용자가 명시적으로 요청하지 않아도 자동 준수합니다.**
+- 성공/실패 모두 동일하게 보고
+- Exit Code가 0이 아니면 에러 원인 분석 추가
+- `review_cycles/cycle_XXXX/to_gpt/run_summary.md`에도 동일 내용 자동 생성
+
 ---
 
 ## 3카드 로깅 시스템
