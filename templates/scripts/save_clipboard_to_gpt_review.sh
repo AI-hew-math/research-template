@@ -24,7 +24,7 @@ done
 # --- Check review_cycles exists ---
 if [[ ! -d "$REVIEW_CYCLES_DIR" ]]; then
     echo "Error: review_cycles/ 디렉토리가 없습니다." >&2
-    echo "먼저 Claude 세션을 실행하여 cycle을 생성하세요." >&2
+    echo "먼저 agent 세션을 실행하여 cycle을 생성하세요." >&2
     exit 1
 fi
 
@@ -33,7 +33,7 @@ LATEST_CYCLE=$(find "$REVIEW_CYCLES_DIR" -maxdepth 1 -type d -name "cycle_*" 2>/
 
 if [[ -z "$LATEST_CYCLE" ]]; then
     echo "Error: review_cycles/에 cycle_* 디렉토리가 없습니다." >&2
-    echo "먼저 Claude 세션을 실행하여 cycle을 생성하세요." >&2
+    echo "먼저 agent 세션을 실행하여 cycle을 생성하세요." >&2
     exit 1
 fi
 

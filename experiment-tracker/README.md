@@ -37,7 +37,7 @@ shell-integration-features = no-title
 
 우선순위:
 1. **git repo**: `git rev-parse --show-toplevel`
-2. **Claude 프로젝트**: 상위에 `.claude/` 또는 `CLAUDE.md` 있는 디렉토리
+2. **Agent 프로젝트**: 상위에 `.claude/` 또는 `CLAUDE.md` 있는 디렉토리
 3. **fallback**: 현재 디렉토리
 
 ---
@@ -51,13 +51,13 @@ RS_TITLE_PREFIX="Work"  # 타이틀 앞에 prefix 추가 → "Work: ProjectName"
 
 ---
 
-## Claude Code 연동
+## Agent CLI 연동 (예: claude)
 
 설치 시 선택적으로 래퍼를 추가할 수 있습니다:
-- Claude가 탭 타이틀을 변경하지 않음
-- Claude 종료 후 타이틀이 프로젝트명으로 복원
+- Agent가 탭 타이틀을 변경하지 않음
+- Agent 종료 후 타이틀이 프로젝트명으로 복원
 
-수동 추가:
+수동 추가 (claude 예시):
 ```bash
 # ~/.zshrc
 unalias claude 2>/dev/null

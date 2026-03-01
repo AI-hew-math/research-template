@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Claude Research Project Generator
+# Research Project Generator
 # Usage: ./create_project.sh "ProjectName" "One-line description"
 
 PROJECT_NAME=$1
@@ -67,7 +67,7 @@ if [ -d "$TEMPLATE_DIR/scripts" ]; then
     cp "$TEMPLATE_DIR/scripts/save_clipboard_to_next_prompt.sh" "$PROJECT_DIR/scripts/" 2>/dev/null && chmod +x "$PROJECT_DIR/scripts/save_clipboard_to_next_prompt.sh"
 fi
 
-# .claude/ 폴더 복사 (Claude Code hooks)
+# .claude/ 폴더 복사 (agent hooks)
 if [ -d "$TEMPLATE_DIR/.claude" ]; then
     cp -R "$TEMPLATE_DIR/.claude" "$PROJECT_DIR/.claude"
     # hooks 실행 권한 보장
@@ -105,7 +105,7 @@ runs/*/stderr.log
 runs/*/env.txt
 runs/*/nvidia-smi.txt
 
-# Claude Code state (local only)
+# Agent state (local only)
 .claude/state/
 
 # Review cycles - ignore all contents, keep structure
@@ -121,11 +121,11 @@ echo "✅ 프로젝트 생성 완료!"
 echo ""
 echo "구조:"
 echo "  $PROJECT_NAME/"
-echo "  ├── CLAUDE.md          # Claude 지침"
+echo "  ├── CLAUDE.md          # Agent 지침"
 echo "  ├── CONCEPT.md         # 연구 아이디어"
 echo "  ├── EXPERIMENT_LOG.md  # 실험 기록 (레거시)"
 echo "  ├── LOGGING.md         # 3카드 로깅 가이드"
-echo "  ├── .claude/           # Claude Code hooks"
+echo "  ├── .claude/           # Agent hooks"
 echo "  ├── src/               # 코드"
 echo "  ├── experiments/memos/ # Experiment Memos"
 echo "  ├── runs/              # Run Cards (자동 생성)"

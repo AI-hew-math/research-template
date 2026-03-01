@@ -19,7 +19,7 @@
 
 **"해줘/실행해줘/돌려줘" → 명령어 안내 대신 직접 실행**
 
-| 사용자 표현 | Claude 행동 |
+| 사용자 표현 | Agent 행동 |
 |------------|------------|
 | "실험 돌려줘: exp=baseline, python train.py" | `./scripts/run.sh --exp baseline python train.py` 실행 |
 | "분석해줘/정리해줘" | `python3 ./scripts/draft_memo.py ...` 실행 |
@@ -73,7 +73,7 @@ python3 ./scripts/draft_memo.py --memo_id <ID> --goal "<목표>" --runs <RUN_ID1
 
 ## 주제 키워드
 
-<!-- Claude가 관련 논문 검색에 사용 -->
+<!-- agent가 관련 논문 검색에 사용 -->
 
 ---
 
@@ -129,6 +129,6 @@ RS_RUN_INDEX=1 ./scripts/run.sh --exp baseline python train.py
 ## 서버 경로 (사용자 환경에 맞게 수정)
 
 <!-- 아래는 예시입니다. 실제 환경에 맞게 수정하세요. -->
-- 로컬: `~/Claude_projects/{{PROJECT_NAME}}/`
+- 로컬: `~/projects/{{PROJECT_NAME}}/`
 - 서버: `~/projects/{{PROJECT_NAME}}/`
 - 동기화: 사용자 정의 스크립트 또는 rsync

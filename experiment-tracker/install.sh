@@ -57,22 +57,22 @@ else
   echo "ℹ️  Ghostty 사용 시 config에 추가 필요: shell-integration-features = no-title"
 fi
 
-# 3) Claude Code 래퍼 (선택)
+# 3) Agent CLI 래퍼 (선택, claude 예시)
 echo
 if type claude >/dev/null 2>&1; then
   CLAUDE_BIN=$(whence -p claude 2>/dev/null || command -v claude 2>/dev/null || which claude 2>/dev/null)
   if grep -qF "function claude" ~/.zshrc 2>/dev/null; then
-    echo "✅ Claude Code 래퍼 이미 등록됨"
+    echo "✅ Agent 래퍼 이미 등록됨"
   else
-    echo "ℹ️  Claude Code 래퍼를 추가하면:"
-    echo "    - Claude가 탭 타이틀을 변경하지 않음"
-    echo "    - Claude 종료 후 타이틀이 프로젝트명으로 복원"
+    echo "ℹ️  Agent 래퍼를 추가하면:"
+    echo "    - Agent가 탭 타이틀을 변경하지 않음"
+    echo "    - Agent 종료 후 타이틀이 프로젝트명으로 복원"
     echo
     read -p "   래퍼 함수를 추가할까요? (y/n) " yn
     if [[ "$yn" == "y" ]]; then
       cat >> ~/.zshrc << EOFCLAUDE
 
-# Claude Code: 타이틀 충돌 방지 + 종료 후 복원
+# Agent CLI: 타이틀 충돌 방지 + 종료 후 복원
 unalias claude 2>/dev/null
 function claude {
   CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 ${CLAUDE_BIN} "\$@"

@@ -1,7 +1,7 @@
 #!/bin/bash
 # cycle_export.sh - GPT 검토 사이클용 파일 자동 export
 #
-# Claude Code hooks에서 호출됨:
+# Agent hooks에서 호출됨:
 #   - UserPromptSubmit: cycle +1, user_prompt.txt 저장
 #   - Stop: 해당 cycle export, last_assistant_message.md 저장
 #   - SessionStart: 초기화 (cycle 증가 없음)
@@ -232,7 +232,7 @@ if [[ "$HOOK_EVENT" == "UserPromptSubmit" ]]; then
 
 ## Status
 
-프롬프트 수신 완료. Claude 응답 대기 중...
+프롬프트 수신 완료. Agent 응답 대기 중...
 
 ## Files
 
@@ -242,7 +242,7 @@ EOF
     cat > "$TO_GPT/UPLOAD_LIST.md" << EOF
 # GPT Upload Guide: $CYCLE_ID (In Progress)
 
-Claude가 응답 중입니다. Stop 이벤트 후 전체 패킷이 생성됩니다.
+Agent가 응답 중입니다. Stop 이벤트 후 전체 패킷이 생성됩니다.
 EOF
 
 else
@@ -263,7 +263,7 @@ else
 
 ## Context
 
-이 패킷은 Claude Code 프롬프트 완료 시 자동 생성됩니다.
+이 패킷은 agent 프롬프트 완료 시 자동 생성됩니다.
 GPT에게 검토를 요청할 때 이 폴더의 파일들을 업로드하세요.
 
 ## Files in This Packet
@@ -272,7 +272,7 @@ $(if [[ -f "$TO_GPT/user_prompt.txt" ]]; then
 echo "- \`user_prompt.txt\` - 사용자 프롬프트"
 fi)
 $(if [[ -f "$TO_GPT/last_assistant_message.md" ]]; then
-echo "- \`last_assistant_message.md\` - Claude 최종 응답"
+echo "- \`last_assistant_message.md\` - Agent 최종 응답"
 fi)
 $(if [[ "$IS_GIT_REPO" == true ]]; then
 echo "- \`git_head.txt\` - 현재 커밋 SHA"
@@ -280,7 +280,7 @@ echo "- \`git_status.txt\` - git status 출력"
 echo "- \`git_diff.patch\` - uncommitted 변경사항"
 fi)
 $(if [[ -f "$TO_GPT/claude_transcript.jsonl" ]]; then
-echo "- \`claude_transcript.jsonl\` - Claude 대화 기록"
+echo "- \`claude_transcript.jsonl\` - Agent 대화 기록"
 fi)
 - \`UPLOAD_LIST.md\` - 업로드 가이드
 - \`packet.md\` - 이 메타데이터 파일
@@ -294,7 +294,7 @@ EOF
 1. **이 파일 (UPLOAD_LIST.md)** - 업로드 가이드
 2. **packet.md** - 메타데이터
 3. **user_prompt.txt** - 사용자가 보낸 프롬프트
-4. **last_assistant_message.md** - Claude 최종 응답
+4. **last_assistant_message.md** - Agent 최종 응답
 5. **git_diff.patch** - 코드 변경사항 (있는 경우)
 
 ## 검토 요청 질문
@@ -316,7 +316,7 @@ $(if [[ -f "$TO_GPT/user_prompt.txt" ]]; then
 echo "| user_prompt.txt | 사용자 프롬프트 | 권장 |"
 fi)
 $(if [[ -f "$TO_GPT/last_assistant_message.md" ]]; then
-echo "| last_assistant_message.md | Claude 응답 | 권장 |"
+echo "| last_assistant_message.md | Agent 응답 | 권장 |"
 fi)
 $(if [[ -f "$TO_GPT/git_diff.patch" ]]; then
 echo "| git_diff.patch | 코드 변경 | 권장 |"
@@ -330,7 +330,7 @@ fi)
 GPT의 검토 결과는 다음 위치에 저장하세요:
 - \`../from_gpt/gpt_review.md\`
 
-다음 Claude 프롬프트는:
+다음 agent 프롬프트는:
 - \`../to_claude/next_prompt.txt\`
 EOF
 fi

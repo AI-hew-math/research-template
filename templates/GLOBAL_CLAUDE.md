@@ -1,13 +1,13 @@
-# Claude_projects 전역 설정
+# 전역 설정
 
-> 모든 프로젝트에서 Claude가 참조하는 지침입니다.
+> 모든 프로젝트에서 agent가 참조하는 지침입니다.
 
 ---
 
 ## 지식 베이스 구조
 
 ```
-Claude_projects/
+~/projects/                # 또는 원하는 루트 경로
 ├── CLAUDE.md              ← 이 파일 (전역 지침)
 ├── _knowledge/
 │   ├── papers/            ← 논문 노트
@@ -28,7 +28,7 @@ Claude_projects/
 
 **"해줘/실행해줘/돌려줘" → 명령어 안내 대신 직접 실행**
 
-| 사용자 표현 | Claude 행동 |
+| 사용자 표현 | Agent 행동 |
 |------------|------------|
 | "실험 돌려줘" | `./scripts/run.sh --exp <exp> <command>` 직접 실행 |
 | "분석해줘/정리해줘" | `python3 ./scripts/draft_memo.py ...` 직접 실행 |

@@ -43,7 +43,7 @@ _rs_find_project_root() {
   pwd -P
 }
 
-# ── TTY 감지 (Claude Code 내부에서도 동작) ──
+# ── TTY 감지 (agent 내부에서도 동작) ──
 _rs_find_tty() {
   if print -n "" > /dev/tty 2>/dev/null; then
     echo "/dev/tty"
