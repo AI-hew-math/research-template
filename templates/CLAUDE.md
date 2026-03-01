@@ -15,6 +15,23 @@
 
 ---
 
+## Operator Mode (자동 실행)
+
+**"해줘/실행해줘/돌려줘" → 명령어 안내 대신 직접 실행**
+
+| 사용자 표현 | Claude 행동 |
+|------------|------------|
+| "실험 돌려줘: exp=baseline, python train.py" | `./scripts/run.sh --exp baseline python train.py` 실행 |
+| "분석해줘/정리해줘" | `python3 ./scripts/draft_memo.py ...` 실행 |
+| "명령어만 알려줘" | 안내만 (유일한 예외) |
+
+**규칙:**
+1. 실험은 반드시 `run.sh`로 래핑 → Run Card 자동
+2. 분석은 `draft_memo.py`로 → Experiment Memo 자동
+3. "명령어만"이 없으면 무조건 실행
+
+---
+
 ## 3카드 로깅 시스템
 
 ### 실험 실행 (Run Card 자동 생성)
@@ -109,8 +126,9 @@ RS_RUN_INDEX=1 ./scripts/run.sh --exp baseline python train.py
 
 ---
 
-## 서버 경로
+## 서버 경로 (사용자 환경에 맞게 수정)
 
-- 맥북: `~/Library/CloudStorage/OneDrive-postech.ac.kr/Claude_projects/{{PROJECT_NAME}}/`
+<!-- 아래는 예시입니다. 실제 환경에 맞게 수정하세요. -->
+- 로컬: `~/Claude_projects/{{PROJECT_NAME}}/`
 - 서버: `~/projects/{{PROJECT_NAME}}/`
-- 동기화: `sync_to soda` / `fetch_from soda`
+- 동기화: 사용자 정의 스크립트 또는 rsync

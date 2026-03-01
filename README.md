@@ -47,10 +47,10 @@ Claude_projects/
 
 ### 1. 템플릿 설치 (최초 1회)
 ```bash
-git clone https://github.com/AI-hew-math/research-template \
-  ~/Library/CloudStorage/OneDrive-postech.ac.kr/Claude_projects/research-template
+# 원하는 위치에 클론
+git clone https://github.com/AI-hew-math/research-template ~/Claude_projects/research-template
 
-cd ~/Library/CloudStorage/OneDrive-postech.ac.kr/Claude_projects/research-template
+cd ~/Claude_projects/research-template
 chmod +x *.sh
 ```
 
@@ -74,7 +74,7 @@ cp templates/GLOBAL_CLAUDE.md ../CLAUDE.md
 ## 새 프로젝트 만들기
 
 ```bash
-cd ~/Library/CloudStorage/OneDrive-postech.ac.kr/Claude_projects/research-template
+cd ~/Claude_projects/research-template
 ./create_project.sh "ProjectName" "연구 주제 설명"
 cd ../ProjectName
 claude

@@ -12,7 +12,7 @@
 실험의 목적과 테스트하려는 가설
 
 ### 설정
-- **서버**: soda / vegi / potato
+- **서버**: (서버명)
 - **Job ID**:
 - **스크립트**: `experiments/scripts/xxx.sh`
 - **Config**: `experiments/configs/xxx.yaml`
