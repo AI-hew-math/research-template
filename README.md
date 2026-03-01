@@ -1,5 +1,8 @@
 # Research Project Template
 
+[![GitHub release](https://img.shields.io/github/v/release/AI-hew-math/research-template)](https://github.com/AI-hew-math/research-template/releases/latest)
+[![Smoke Test](https://github.com/AI-hew-math/research-template/actions/workflows/smoke.yml/badge.svg)](https://github.com/AI-hew-math/research-template/actions/workflows/smoke.yml)
+
 Claude Code와 함께하는 연구 프로젝트 템플릿
 
 ## 권장 워크플로우
