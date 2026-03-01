@@ -331,11 +331,11 @@ if [[ "$HOOK_EVENT" == "Stop" || "$HOOK_EVENT" == "SessionEnd" ]]; then
     if [[ "$IS_GIT_REPO" == true ]]; then
         printf '%s\n' "$GIT_HEAD" > "$TO_GPT/git_head.txt"
         printf '%s\n' "$GIT_STATUS" > "$TO_GPT/git_status.txt"
+        # Only create git_diff.patch if there are actual changes
         if [[ -n "$GIT_DIFF" ]]; then
             printf '%s\n' "$GIT_DIFF" > "$TO_GPT/git_diff.patch"
-        else
-            echo "# No uncommitted changes" > "$TO_GPT/git_diff.patch"
         fi
+        # Note: if no changes, git_diff.patch is not created (packet.md will omit it)
     fi
 
     # Export transcript (only on Stop/SessionEnd)
@@ -434,138 +434,22 @@ for i, line in enumerate(sys.stdin):
         fi
     fi
 
-    # --- Collect run_logs.txt (failed runs only, space-safe) ---
-    # Uses Python for: space-safe paths, mtime sorting, robust exit code parsing
-    RUN_LOG_MAX="${RS_RUN_LOG_MAX_BYTES:-51200}"  # 50KB default
+    # --- Generate run_summary.md AND run_logs.txt (combined, latest run only) ---
+    # run_summary.md: always generated for most recent run
+    # run_logs.txt: only generated if latest run FAILED (exit_code != 0)
+    RUN_SUMMARY_MISSING=""
     RUNS_DIR="$CWD/runs"
 
     if [[ -d "$RUNS_DIR" ]]; then
-        python3 - "$RUNS_DIR" "$TO_GPT/run_logs.txt" "$RUN_LOG_MAX" << 'PYRUNLOGS' 2>/dev/null || true
-import sys
-import os
-import re
-from pathlib import Path
-from datetime import datetime
-
-runs_dir = Path(sys.argv[1])
-output_path = Path(sys.argv[2])
-max_bytes = int(sys.argv[3])
-
-# Exit code patterns (multiple formats supported)
-EXIT_PATTERNS = [
-    r'Exit Code[:\s|]+(\d+)',      # "Exit Code: 42" or "Exit Code | 42"
-    r'exit[=:\s]+(\d+)',            # "exit=42" or "exit: 42"
-    r'\*\*Exit Code\*\*\s*\|\s*(\d+)',  # Markdown table format
-]
-
-def parse_exit_code(run_card_path):
-    """Parse exit code from run_card.md, returns 0 if not found or success."""
-    try:
-        content = run_card_path.read_text()
-        for pattern in EXIT_PATTERNS:
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                return int(match.group(1))
-    except:
-        pass
-    return 0  # Default to success if parsing fails
-
-def get_mtime(path):
-    """Get modification time, returns 0 on error."""
-    try:
-        return path.stat().st_mtime
-    except:
-        return 0
-
-# Find all run_card.md files, sort by mtime descending, take top 10
-run_cards = list(runs_dir.glob('*/run_card.md'))
-run_cards.sort(key=get_mtime, reverse=True)
-run_cards = run_cards[:10]  # Limit to recent 10
-
-# Filter to failed runs only
-failed_runs = []
-for rc in run_cards:
-    exit_code = parse_exit_code(rc)
-    if exit_code != 0:
-        failed_runs.append((rc.parent, exit_code))
-
-if not failed_runs:
-    sys.exit(0)  # No failed runs, don't create file
-
-# Build output
-output_lines = []
-output_lines.append("# Failed Run Logs (auto-extracted)")
-output_lines.append(f"# Generated: {datetime.now().isoformat()}")
-output_lines.append(f"# Found {len(failed_runs)} failed run(s)")
-output_lines.append("")
-
-stderr_limit = max_bytes // 4
-stdout_limit = max_bytes // 8
-
-for run_dir, exit_code in failed_runs:
-    run_id = run_dir.name
-    output_lines.append(f"## Run: {run_id} (exit={exit_code})")
-    output_lines.append("")
-
-    # stderr first (usually more important)
-    stderr_path = run_dir / "stderr.log"
-    if stderr_path.exists():
-        try:
-            stderr_size = stderr_path.stat().st_size
-            output_lines.append(f"### stderr.log ({stderr_size} bytes)")
-            output_lines.append("```")
-            content = stderr_path.read_bytes()
-            if len(content) > stderr_limit:
-                output_lines.append(f"... (truncated, showing last {stderr_limit // 1024}KB of {stderr_size} bytes) ...")
-                content = content[-stderr_limit:]
-            output_lines.append(content.decode('utf-8', errors='replace'))
-            output_lines.append("```")
-            output_lines.append("")
-        except Exception as e:
-            output_lines.append(f"(error reading stderr: {e})")
-            output_lines.append("")
-
-    # stdout tail
-    stdout_path = run_dir / "stdout.log"
-    if stdout_path.exists():
-        try:
-            stdout_size = stdout_path.stat().st_size
-            output_lines.append(f"### stdout.log tail ({stdout_size} bytes total)")
-            output_lines.append("```")
-            content = stdout_path.read_bytes()
-            if len(content) > stdout_limit:
-                content = content[-stdout_limit:]
-            output_lines.append(content.decode('utf-8', errors='replace'))
-            output_lines.append("```")
-            output_lines.append("")
-        except Exception as e:
-            output_lines.append(f"(error reading stdout: {e})")
-            output_lines.append("")
-
-# Join and check size
-output = '\n'.join(output_lines)
-if len(output.encode('utf-8')) > max_bytes:
-    # Truncate at byte level
-    output_bytes = output.encode('utf-8')[:max_bytes]
-    output = output_bytes.decode('utf-8', errors='ignore')
-    output += f"\n\n... (truncated at {max_bytes} bytes) ..."
-
-output_path.write_text(output)
-PYRUNLOGS
-    fi
-
-    # --- Generate run_summary.md (most recent run, success or fail) ---
-    # Different from run_logs.txt: this covers ALL runs, not just failures
-    RUN_SUMMARY_MISSING=""
-    if [[ -d "$RUNS_DIR" ]]; then
-        python3 - "$RUNS_DIR" "$TO_GPT/run_summary.md" << 'PYRUNSUMMARY' 2>/dev/null || true
+        python3 - "$RUNS_DIR" "$TO_GPT/run_summary.md" "$TO_GPT/run_logs.txt" << 'PYRUNSUMMARY' 2>/dev/null || true
 import sys
 import re
 from pathlib import Path
 from datetime import datetime
 
 runs_dir = Path(sys.argv[1])
-output_path = Path(sys.argv[2])
+summary_path = Path(sys.argv[2])
+runlogs_path = Path(sys.argv[3])
 
 EXIT_PATTERNS = [
     r'Exit Code[:\s|]+(\d+)',
@@ -601,7 +485,7 @@ run_dir = latest_rc.parent
 run_id = run_dir.name
 exit_code = parse_exit_code(latest_rc)
 
-# Build summary
+# ========== Generate run_summary.md (always) ==========
 lines = []
 lines.append("# Run Summary (auto-generated)")
 lines.append(f"Generated: {datetime.now().isoformat()}")
@@ -654,7 +538,55 @@ if stderr_path.exists():
 else:
     lines.append("(no stderr.log)")
 
-output_path.write_text('\n'.join(lines))
+summary_path.write_text('\n'.join(lines))
+
+# ========== Generate run_logs.txt (only if FAILED) ==========
+if exit_code is not None and exit_code != 0:
+    log_lines = []
+    log_lines.append("# Failed Run Log (auto-extracted)")
+    log_lines.append(f"Generated: {datetime.now().isoformat()}")
+    log_lines.append("")
+    log_lines.append(f"## Run ID")
+    log_lines.append(f"`{run_id}`")
+    log_lines.append("")
+    log_lines.append(f"## Exit Code")
+    log_lines.append(f"**{exit_code}** (FAILED)")
+    log_lines.append("")
+
+    # stdout tail 20
+    log_lines.append("## stdout (last 20 lines)")
+    if stdout_path.exists():
+        try:
+            content = stdout_path.read_text()
+            stdout_lines = content.splitlines()[-20:]
+            log_lines.append("```")
+            log_lines.extend(stdout_lines)
+            log_lines.append("```")
+        except Exception as e:
+            log_lines.append(f"(error: {e})")
+    else:
+        log_lines.append("(no stdout.log)")
+    log_lines.append("")
+
+    # stderr tail 50
+    log_lines.append("## stderr (last 50 lines)")
+    if stderr_path.exists():
+        try:
+            content = stderr_path.read_text()
+            stderr_lines = content.splitlines()[-50:]
+            if stderr_lines:
+                log_lines.append("```")
+                log_lines.extend(stderr_lines)
+                log_lines.append("```")
+            else:
+                log_lines.append("(empty)")
+        except Exception as e:
+            log_lines.append(f"(error: {e})")
+    else:
+        log_lines.append("(no stderr.log)")
+
+    runlogs_path.write_text('\n'.join(log_lines))
+# Note: if exit_code == 0 (SUCCESS), run_logs.txt is NOT created
 PYRUNSUMMARY
 
         if [[ ! -s "$TO_GPT/run_summary.md" ]]; then

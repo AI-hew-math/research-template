@@ -303,12 +303,12 @@ fi
 
 rm -f "$MOCK_TRANSCRIPT"
 
-# 4i: run_logs.txt generation test (DETERMINISTIC - create fake failed run)
-# Create a dedicated fake failed run for this test (not relying on FAIL_RUN timing)
+# 4i: run_logs.txt generation test (DETERMINISTIC - only for FAILED latest run)
+# Create a fake failed run (latest by mtime)
 FAKE_FAIL_RUN="$PROJECT_DIR/runs/ci_fake_fail_run"
 mkdir -p "$FAKE_FAIL_RUN"
 
-# Create run_card.md with exit code 42 (multiple format patterns tested)
+# Create run_card.md with exit code 42
 cat > "$FAKE_FAIL_RUN/run_card.md" << 'RUNCARD'
 # Run Card: ci_fake_fail_run
 
@@ -326,35 +326,80 @@ echo "  File 'test.py', line 1" >> "$FAKE_FAIL_RUN/stderr.log"
 # Create stdout
 echo "stdout content for ci test" > "$FAKE_FAIL_RUN/stdout.log"
 
-# Touch to ensure mtime is recent
+# Touch to ensure this is the latest run
+sleep 0.1
 touch "$FAKE_FAIL_RUN/run_card.md"
 
-# Trigger cycle_export Stop to collect run_logs
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_logs test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+# Trigger cycle_export Stop
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_logs failed test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Checking logs"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 if [[ -f "review_cycles/cycle_0006/to_gpt/run_logs.txt" ]]; then
-    pass "run_logs.txt created for failed runs"
+    pass "run_logs.txt created for failed latest run"
 
-    # Verify Error content is included
+    # Verify error content from stderr
     if grep -q "CI deterministic failure test" "review_cycles/cycle_0006/to_gpt/run_logs.txt"; then
-        pass "run_logs.txt contains Error content from stderr"
+        pass "run_logs.txt contains stderr Error content"
     else
         fail "run_logs.txt should contain stderr Error content"
     fi
 
-    # Verify exit code is shown
-    if grep -q "exit=42\|exit_code.*42" "review_cycles/cycle_0006/to_gpt/run_logs.txt"; then
+    # Verify exit code is shown (new format: **42** (FAILED))
+    if grep -q "42.*FAILED\|Exit Code" "review_cycles/cycle_0006/to_gpt/run_logs.txt"; then
         pass "run_logs.txt shows exit code"
     else
         fail "run_logs.txt should show exit code"
     fi
 else
-    fail "run_logs.txt should be created (deterministic test)"
+    fail "run_logs.txt should be created for failed run"
 fi
 
 # Cleanup fake run
 rm -rf "$FAKE_FAIL_RUN"
+
+# 4i-2: run_logs.txt should NOT be created for SUCCESS run
+# Create a fake success run (latest by mtime)
+FAKE_SUCCESS_RUN="$PROJECT_DIR/runs/ci_fake_success_run"
+mkdir -p "$FAKE_SUCCESS_RUN"
+
+cat > "$FAKE_SUCCESS_RUN/run_card.md" << 'RUNCARD'
+# Run Card: ci_fake_success_run
+
+| Field | Value |
+|-------|-------|
+| **Exit Code** | 0 |
+| **Duration** | 1s |
+RUNCARD
+
+echo "SUCCESS output" > "$FAKE_SUCCESS_RUN/stdout.log"
+
+# Touch to ensure this is the latest run
+sleep 0.1
+touch "$FAKE_SUCCESS_RUN/run_card.md"
+
+# Trigger cycle_export Stop
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_logs success test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Success check"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+if [[ ! -f "review_cycles/cycle_0007/to_gpt/run_logs.txt" ]]; then
+    pass "run_logs.txt NOT created for success run (correct)"
+else
+    fail "run_logs.txt should NOT be created for success run"
+fi
+
+# Verify run_summary.md still exists for success run
+if [[ -f "review_cycles/cycle_0007/to_gpt/run_summary.md" ]]; then
+    if grep -q "SUCCESS" "review_cycles/cycle_0007/to_gpt/run_summary.md"; then
+        pass "run_summary.md shows SUCCESS for exit=0"
+    else
+        fail "run_summary.md should show SUCCESS"
+    fi
+else
+    fail "run_summary.md should exist even for success run"
+fi
+
+# Cleanup fake run
+rm -rf "$FAKE_SUCCESS_RUN"
 
 # 4j: packet.md contains file sizes
 if grep -q "B |" "review_cycles/cycle_0005/to_gpt/packet.md" 2>/dev/null; then
@@ -385,8 +430,8 @@ echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt
 # Stop WITHOUT last_assistant_message, but WITH transcript_path
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "transcript_path": "'"$MOCK_TRANSCRIPT_RECOVERY"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-if [[ -f "review_cycles/cycle_0007/to_gpt/last_assistant_message.md" ]]; then
-    RECOVERED_MSG=$(cat "review_cycles/cycle_0007/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
+if [[ -f "review_cycles/cycle_0008/to_gpt/last_assistant_message.md" ]]; then
+    RECOVERED_MSG=$(cat "review_cycles/cycle_0008/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
     if echo "$RECOVERED_MSG" | grep -q "FINAL_ASSISTANT_TEXT_FROM_NESTED_TRANSCRIPT"; then
         pass "Stop recovers last_assistant_message from nested transcript"
     else
@@ -397,7 +442,7 @@ else
 fi
 
 # Check that packet.md does NOT show MISSING for this case
-if grep -q "MISSING.*last_assistant_message" "review_cycles/cycle_0007/to_gpt/packet.md" 2>/dev/null; then
+if grep -q "MISSING.*last_assistant_message" "review_cycles/cycle_0008/to_gpt/packet.md" 2>/dev/null; then
     fail "packet.md should not show MISSING when transcript recovery succeeds"
 else
     pass "packet.md shows no MISSING when transcript recovery succeeds"
@@ -417,10 +462,10 @@ echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "transcript_path": "'"$MOCK_TRANSCRIPT_EMPTY"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 # File should NOT exist (deleted when 0-byte)
-if [[ ! -f "review_cycles/cycle_0008/to_gpt/last_assistant_message.md" ]]; then
+if [[ ! -f "review_cycles/cycle_0009/to_gpt/last_assistant_message.md" ]]; then
     pass "0-byte last_assistant_message.md is deleted"
 else
-    if [[ ! -s "review_cycles/cycle_0008/to_gpt/last_assistant_message.md" ]]; then
+    if [[ ! -s "review_cycles/cycle_0009/to_gpt/last_assistant_message.md" ]]; then
         fail "0-byte file should be deleted"
     else
         pass "last_assistant_message.md has content (unexpected but ok)"
@@ -428,7 +473,7 @@ else
 fi
 
 # packet.md should show MISSING warning
-if grep -q "MISSING.*last_assistant_message" "review_cycles/cycle_0008/to_gpt/packet.md" 2>/dev/null; then
+if grep -q "MISSING.*last_assistant_message" "review_cycles/cycle_0009/to_gpt/packet.md" 2>/dev/null; then
     pass "packet.md shows MISSING for empty transcript extraction"
 else
     fail "packet.md should show MISSING when extraction yields nothing"
@@ -471,7 +516,7 @@ touch "$FAKE_SUMMARY_RUN/run_card.md"
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_summary test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Checking run summary"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-RUN_SUMMARY_FILE="review_cycles/cycle_0009/to_gpt/run_summary.md"
+RUN_SUMMARY_FILE="review_cycles/cycle_0010/to_gpt/run_summary.md"
 
 if [[ -f "$RUN_SUMMARY_FILE" ]]; then
     pass "run_summary.md created"

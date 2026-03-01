@@ -188,12 +188,15 @@ RS_GIT_SNAP=1 RS_GIT_PUSH=1 ./scripts/run.sh --exp baseline python train.py
 | `packet.md` | 항상 | 필수 | 메타데이터 + 파일 크기 |
 | `user_prompt.txt` | 항상 | 필수 | 사용자 프롬프트 |
 | `last_assistant_message.md` | 항상 | 필수 | Agent 최종 응답 |
-| `git_diff.patch` | git repo | 권장 | 코드 변경사항 |
+| `run_summary.md` | run 존재 시 | 필수 | 최신 Run 요약 (5항목) |
+| `git_diff.patch` | 변경사항 있을 때 | 권장 | 코드 diff (없으면 미생성) |
 | `git_status.txt` | git repo | 선택 | git status 출력 |
 | `git_head.txt` | git repo | 선택 | 현재 커밋 SHA |
 | `transcript_tail.jsonl` | transcript 제공 시 | 권장 | 대화 요약 (에러 우선 추출) |
-| `run_logs.txt` | 실패 run 존재 시 | 권장 | 실패 로그 (stderr/stdout) |
+| `run_logs.txt` | 최신 run 실패 시 | 권장 | 실패 로그 (성공 시 미생성) |
 | `claude_transcript.jsonl` | transcript 제공 시 | 보관용 | 전체 대화 (업로드 비권장) |
+
+> **참고**: `run_logs.txt`는 이번 프롬프트에서 실행한 최신 run이 **실패(exit_code != 0)**했을 때만 생성됩니다. 성공 run에서는 생성되지 않습니다.
 
 ### 구조 (v1.1+)
 
@@ -205,9 +208,10 @@ review_cycles/
 │   │   ├── packet.md                   # [필수] 메타데이터 + 파일 크기
 │   │   ├── user_prompt.txt             # [필수] 사용자 프롬프트
 │   │   ├── last_assistant_message.md   # [필수] Agent 응답
-│   │   ├── git_diff.patch              # [권장] 코드 diff (git repo 시)
+│   │   ├── run_summary.md              # [필수] 최신 Run 요약
+│   │   ├── git_diff.patch              # [권장] 코드 diff (변경 시만)
 │   │   ├── transcript_tail.jsonl       # [권장] 대화 요약 (에러 우선)
-│   │   ├── run_logs.txt                # [권장] 실패 로그 (있을 때)
+│   │   ├── run_logs.txt                # [권장] 실패 로그 (실패 시만)
 │   │   ├── git_status.txt, git_head.txt # [선택]
 │   │   └── claude_transcript.jsonl     # [보관용] 전체 대화
 │   ├── from_gpt/
@@ -220,7 +224,7 @@ review_cycles/
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `RS_TRANSCRIPT_TAIL_LINES` | 400 | transcript_tail 최대 라인 수 |
-| `RS_RUN_LOG_MAX_BYTES` | 51200 | run_logs.txt 최대 크기 (50KB) |
+| `RS_HOOK_DEBUG` | 0 | 1로 설정 시 hook_input_stop.json 저장 |
 
 ### 사용 흐름
 
@@ -238,7 +242,8 @@ review_cycles/
 
 - **claude_transcript.jsonl**: 전체 대화 보관용 (큰 파일, 업로드 비권장)
 - **transcript_tail.jsonl**: 업로드용 요약 (에러/실패/traceback 우선 추출, 최근 라인 우선)
-- **run_logs.txt**: 실패한 run의 stderr/stdout만 추출 (mtime 내림차순, 크기 제한)
+- **run_logs.txt**: 이번 프롬프트의 최신 run이 실패 시에만 생성 (성공 run에서는 미생성)
+- **git_diff.patch**: uncommitted changes가 있을 때만 생성 (없으면 미생성)
 
 #### transcript_tail.jsonl 포맷 (valid JSONL)
 
