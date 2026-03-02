@@ -198,22 +198,45 @@ fi
 echo "[run.sh] Run dir: $RUN_DIR"
 
 # --- Append to run_events.jsonl (for cycle-based collection) ---
-# Graceful: if no cycle is active (hooks not approved), just skip
+# Features:
+#   - Atomic append with fcntl file locking (race-safe for concurrent runs)
+#   - Stale cycle detection: if cycle > 60min old, write to unattributed_run_events.jsonl
+#   - Graceful fallback: if no cycle active (hooks not approved), just skip
 CYCLE_ID_FILE="$PROJECT_DIR/.claude/state/current_cycle_id"
+CYCLE_TS_FILE="$PROJECT_DIR/.claude/state/current_cycle_start_ts"
+RS_CYCLE_STALE_MINUTES="${RS_CYCLE_STALE_MINUTES:-60}"
+
 if [[ -f "$CYCLE_ID_FILE" ]]; then
     CYCLE_NUM=$(cat "$CYCLE_ID_FILE" 2>/dev/null || echo "")
     if [[ -n "$CYCLE_NUM" && "$CYCLE_NUM" =~ ^[0-9]+$ ]]; then
-        CYCLE_DIR=$(printf "cycle_%04d" "$CYCLE_NUM")
-        RUN_EVENTS_FILE="$PROJECT_DIR/review_cycles/$CYCLE_DIR/to_gpt/run_events.jsonl"
+        # Check if cycle is stale (older than RS_CYCLE_STALE_MINUTES)
+        IS_STALE=false
+        if [[ -f "$CYCLE_TS_FILE" ]]; then
+            CYCLE_START_TS=$(cat "$CYCLE_TS_FILE" 2>/dev/null || echo "0")
+            CURRENT_TS=$(date +%s)
+            STALE_SECONDS=$((RS_CYCLE_STALE_MINUTES * 60))
+            if [[ $((CURRENT_TS - CYCLE_START_TS)) -gt $STALE_SECONDS ]]; then
+                IS_STALE=true
+            fi
+        fi
 
-        # Ensure directory exists
-        mkdir -p "$(dirname "$RUN_EVENTS_FILE")"
+        if [[ "$IS_STALE" == "true" ]]; then
+            # Stale cycle: write to unattributed_run_events.jsonl
+            RUN_EVENTS_FILE="$PROJECT_DIR/review_cycles/unattributed_run_events.jsonl"
+            mkdir -p "$(dirname "$RUN_EVENTS_FILE")"
+        else
+            # Active cycle: write to cycle-specific run_events.jsonl
+            CYCLE_DIR=$(printf "cycle_%04d" "$CYCLE_NUM")
+            RUN_EVENTS_FILE="$PROJECT_DIR/review_cycles/$CYCLE_DIR/to_gpt/run_events.jsonl"
+            mkdir -p "$(dirname "$RUN_EVENTS_FILE")"
+        fi
 
-        # Append JSONL entry using python for safe JSON escaping
-        python3 - "$RUN_EVENTS_FILE" "$RUN_ID" "$EXP_NAME" "$EXIT_CODE" "$DURATION" "$RUN_DIR" "$COMMAND_STR" << 'PYAPPEND' 2>/dev/null || true
+        # Atomic append with fcntl file locking (macOS/Linux compatible)
+        python3 - "$RUN_EVENTS_FILE" "$RUN_ID" "$EXP_NAME" "$EXIT_CODE" "$DURATION" "$RUN_DIR" "$COMMAND_STR" "$CYCLE_NUM" "$IS_STALE" << 'PYAPPEND' 2>/dev/null || true
 import sys
 import json
 import time
+import fcntl
 
 events_path = sys.argv[1]
 run_id = sys.argv[2]
@@ -222,6 +245,8 @@ exit_code = int(sys.argv[4])
 duration = int(sys.argv[5])
 run_dir = sys.argv[6]
 cmd = sys.argv[7]
+cycle_num = sys.argv[8]
+is_stale = sys.argv[9] == "true"
 
 entry = {
     "ts": int(time.time()),
@@ -235,8 +260,22 @@ entry = {
     "stderr_path": f"{run_dir}/stderr.log"
 }
 
+# Add cycle info for unattributed runs
+if is_stale:
+    entry["stale_cycle"] = int(cycle_num)
+    entry["note"] = "cycle was stale (>60min), run unattributed"
+
+# Atomic append with exclusive lock
+# Prepare line BEFORE acquiring lock to minimize lock hold time
+line = json.dumps(entry, ensure_ascii=False) + '\n'
+
 with open(events_path, 'a') as f:
-    f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+    fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+    try:
+        f.write(line)
+        f.flush()  # Ensure write is complete before releasing lock
+    finally:
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Release lock
 PYAPPEND
     fi
 fi

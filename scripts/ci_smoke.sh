@@ -154,11 +154,18 @@ info "Test 4: cycle_export.sh (UserPromptSubmit/Stop)"
 
 mkdir -p review_cycles .claude/state
 
-# 4a: UserPromptSubmit → cycle_0001 + user_prompt.txt
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "Test prompt 1"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+# Helper function: get current cycle directory path
+get_cycle_dir() {
+    local cycle_num=$(cat .claude/state/current_cycle.txt 2>/dev/null || echo "0")
+    printf "review_cycles/cycle_%04d" "$cycle_num"
+}
 
-if [[ -f "review_cycles/cycle_0001/to_gpt/user_prompt.txt" ]]; then
-    pass "UserPromptSubmit creates cycle_0001 + user_prompt.txt"
+# 4a: UserPromptSubmit → creates cycle directory + user_prompt.txt
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "Test prompt 1"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4A=$(get_cycle_dir)
+
+if [[ -f "$CYCLE_4A/to_gpt/user_prompt.txt" ]]; then
+    pass "UserPromptSubmit creates cycle + user_prompt.txt"
 else
     fail "UserPromptSubmit failed to create user_prompt.txt"
 fi
@@ -166,23 +173,26 @@ fi
 # 4b: Stop → last_assistant_message.md in same cycle
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Test response from agent"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-if [[ -f "review_cycles/cycle_0001/to_gpt/last_assistant_message.md" ]]; then
+if [[ -f "$CYCLE_4A/to_gpt/last_assistant_message.md" ]]; then
     pass "Stop creates last_assistant_message.md"
 else
     fail "Stop failed to create last_assistant_message.md"
 fi
 
-# 4c: Second UserPromptSubmit → cycle_0002
+# 4c: Second UserPromptSubmit → increments cycle
+PREV_CYCLE_NUM=$(cat .claude/state/current_cycle.txt 2>/dev/null || echo "0")
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "Test prompt 2"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4C=$(get_cycle_dir)
+NEW_CYCLE_NUM=$(cat .claude/state/current_cycle.txt 2>/dev/null || echo "0")
 
-if [[ -d "review_cycles/cycle_0002" ]]; then
-    pass "Second UserPromptSubmit creates cycle_0002"
+if [[ "$NEW_CYCLE_NUM" -gt "$PREV_CYCLE_NUM" ]] && [[ -d "$CYCLE_4C" ]]; then
+    pass "Second UserPromptSubmit increments cycle"
 else
     fail "Second UserPromptSubmit failed to increment cycle"
 fi
 
 # 4d: Verify packet.md exists
-if [[ -f "review_cycles/cycle_0001/to_gpt/packet.md" ]] && [[ -f "review_cycles/cycle_0001/to_gpt/UPLOAD_LIST.md" ]]; then
+if [[ -f "$CYCLE_4A/to_gpt/packet.md" ]] && [[ -f "$CYCLE_4A/to_gpt/UPLOAD_LIST.md" ]]; then
     pass "cycle_export.sh creates packet.md + UPLOAD_LIST.md"
 else
     fail "cycle_export.sh missing packet files"
@@ -195,8 +205,9 @@ Line 3 with $special chars
 Line 4'
 
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "'"$(echo "$MULTILINE_PROMPT" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read())[1:-1])')"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4E=$(get_cycle_dir)
 
-SAVED_PROMPT=$(cat "review_cycles/cycle_0003/to_gpt/user_prompt.txt" 2>/dev/null || echo "")
+SAVED_PROMPT=$(cat "$CYCLE_4E/to_gpt/user_prompt.txt" 2>/dev/null || echo "")
 if [[ "$SAVED_PROMPT" == "$MULTILINE_PROMPT" ]]; then
     pass "Multiline prompt preserved correctly"
 else
@@ -216,7 +227,7 @@ End of response.'
 
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "'"$(echo "$MULTILINE_RESPONSE" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read())[1:-1])')"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-SAVED_RESPONSE=$(cat "review_cycles/cycle_0003/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
+SAVED_RESPONSE=$(cat "$CYCLE_4E/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
 if [[ "$SAVED_RESPONSE" == "$MULTILINE_RESPONSE" ]]; then
     pass "Multiline assistant message preserved correctly"
 else
@@ -224,30 +235,26 @@ else
 fi
 
 # 4g: stop_hook_active handling test (relaxed policy)
-# Setup: create cycle_0004 with UserPromptSubmit, then test stop_hook_active Stop
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "stop_hook test prompt"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4G=$(get_cycle_dir)
 
-# Now test stop_hook_active=true Stop on cycle_0004
 STOP_HOOK_MSG="stop_hook_active response"
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "stop_hook_active": true, "last_assistant_message": "'"$STOP_HOOK_MSG"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-# Check: last_assistant_message.md saved (relaxed policy allows this)
-SAVED_STOP_MSG=$(cat "review_cycles/cycle_0004/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
+SAVED_STOP_MSG=$(cat "$CYCLE_4G/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
 if [[ "$SAVED_STOP_MSG" == "$STOP_HOOK_MSG" ]]; then
     pass "stop_hook_active=true saves last_assistant_message (relaxed)"
 else
     fail "stop_hook_active should save last_assistant_message"
 fi
 
-# Check: heavy ops skipped (no git_diff.patch since stop_hook_active exits before git ops)
-if [[ ! -f "review_cycles/cycle_0004/to_gpt/git_diff.patch" ]]; then
+if [[ ! -f "$CYCLE_4G/to_gpt/git_diff.patch" ]]; then
     pass "stop_hook_active=true skips heavy ops (no git_diff)"
 else
     fail "stop_hook_active should skip git operations"
 fi
 
 # 4h: transcript_tail.jsonl generation test (JSONL validity + error extraction)
-# Create a mock transcript file with error content
 MOCK_TRANSCRIPT=$(mktemp)
 cat > "$MOCK_TRANSCRIPT" << 'MOCKEOF'
 {"type": "message", "content": "Starting task..."}
@@ -261,23 +268,22 @@ cat > "$MOCK_TRANSCRIPT" << 'MOCKEOF'
 MOCKEOF
 
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "transcript test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4H=$(get_cycle_dir)
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "transcript_path": "'"$MOCK_TRANSCRIPT"'", "last_assistant_message": "Done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-if [[ -f "review_cycles/cycle_0005/to_gpt/claude_transcript.jsonl" ]]; then
+if [[ -f "$CYCLE_4H/to_gpt/claude_transcript.jsonl" ]]; then
     pass "transcript_path copies full transcript"
 else
     fail "transcript_path should copy full transcript"
 fi
 
-if [[ -f "review_cycles/cycle_0005/to_gpt/transcript_tail.jsonl" ]]; then
-    # Check that error lines are prioritized (via text field)
-    if grep -q '"Error\|"Traceback' "review_cycles/cycle_0005/to_gpt/transcript_tail.jsonl"; then
+if [[ -f "$CYCLE_4H/to_gpt/transcript_tail.jsonl" ]]; then
+    if grep -q '"Error\|"Traceback' "$CYCLE_4H/to_gpt/transcript_tail.jsonl"; then
         pass "transcript_tail.jsonl extracts error content"
     else
         fail "transcript_tail.jsonl should prioritize error content"
     fi
 
-    # JSONL validity check: every line must parse as JSON
     JSONL_VALID=$(python3 -c '
 import sys, json
 path = sys.argv[1]
@@ -290,7 +296,7 @@ try:
     print("VALID")
 except Exception as e:
     print(f"INVALID at line {i}: {e}")
-' "review_cycles/cycle_0005/to_gpt/transcript_tail.jsonl" 2>&1)
+' "$CYCLE_4H/to_gpt/transcript_tail.jsonl" 2>&1)
 
     if [[ "$JSONL_VALID" == "VALID" ]]; then
         pass "transcript_tail.jsonl is valid JSONL"
@@ -304,11 +310,9 @@ fi
 rm -f "$MOCK_TRANSCRIPT"
 
 # 4i: run_logs.txt generation test (DETERMINISTIC - only for FAILED run)
-# Create a fake failed run with run_events.jsonl entry
 FAKE_FAIL_RUN="$PROJECT_DIR/runs/ci_fake_fail_run"
 mkdir -p "$FAKE_FAIL_RUN"
 
-# Create run_card.md with exit code 42
 cat > "$FAKE_FAIL_RUN/run_card.md" << 'RUNCARD'
 # Run Card: ci_fake_fail_run
 
@@ -318,38 +322,31 @@ cat > "$FAKE_FAIL_RUN/run_card.md" << 'RUNCARD'
 | **Duration** | 1s |
 RUNCARD
 
-# Create stderr with Error content
 echo "Error: CI deterministic failure test" > "$FAKE_FAIL_RUN/stderr.log"
 echo "Traceback (most recent call last):" >> "$FAKE_FAIL_RUN/stderr.log"
 echo "  File 'test.py', line 1" >> "$FAKE_FAIL_RUN/stderr.log"
-
-# Create stdout
 echo "stdout content for ci test" > "$FAKE_FAIL_RUN/stdout.log"
 
-# Trigger UserPromptSubmit to create cycle
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_logs failed test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4I=$(get_cycle_dir)
 
-# Create run_events.jsonl with the fake run entry
-mkdir -p "review_cycles/cycle_0006/to_gpt"
-cat > "review_cycles/cycle_0006/to_gpt/run_events.jsonl" << RUNEVENTS
+mkdir -p "$CYCLE_4I/to_gpt"
+cat > "$CYCLE_4I/to_gpt/run_events.jsonl" << RUNEVENTS
 {"ts": $(date +%s), "run_id": "ci_fake_fail_run", "exp": "ci_fail", "cmd": "fake", "run_dir": "$FAKE_FAIL_RUN", "exit_code": 42, "duration": 1, "stdout_path": "$FAKE_FAIL_RUN/stdout.log", "stderr_path": "$FAKE_FAIL_RUN/stderr.log"}
 RUNEVENTS
 
-# Trigger Stop
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Checking logs"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-if [[ -f "review_cycles/cycle_0006/to_gpt/run_logs.txt" ]]; then
+if [[ -f "$CYCLE_4I/to_gpt/run_logs.txt" ]]; then
     pass "run_logs.txt created for failed latest run"
 
-    # Verify error content from stderr
-    if grep -q "CI deterministic failure test" "review_cycles/cycle_0006/to_gpt/run_logs.txt"; then
+    if grep -q "CI deterministic failure test" "$CYCLE_4I/to_gpt/run_logs.txt"; then
         pass "run_logs.txt contains stderr Error content"
     else
         fail "run_logs.txt should contain stderr Error content"
     fi
 
-    # Verify exit code is shown (new format: **42** (FAILED))
-    if grep -q "42.*FAILED\|Exit Code" "review_cycles/cycle_0006/to_gpt/run_logs.txt"; then
+    if grep -q "42.*FAILED\|Exit Code" "$CYCLE_4I/to_gpt/run_logs.txt"; then
         pass "run_logs.txt shows exit code"
     else
         fail "run_logs.txt should show exit code"
@@ -358,11 +355,9 @@ else
     fail "run_logs.txt should be created for failed run"
 fi
 
-# Cleanup fake run
 rm -rf "$FAKE_FAIL_RUN"
 
 # 4i-2: run_logs.txt should NOT be created for SUCCESS run
-# Create a fake success run with run_events.jsonl entry
 FAKE_SUCCESS_RUN="$PROJECT_DIR/runs/ci_fake_success_run"
 mkdir -p "$FAKE_SUCCESS_RUN"
 
@@ -377,27 +372,24 @@ RUNCARD
 
 echo "SUCCESS output" > "$FAKE_SUCCESS_RUN/stdout.log"
 
-# Trigger UserPromptSubmit to create cycle
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_logs success test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4I2=$(get_cycle_dir)
 
-# Create run_events.jsonl with the success run entry
-mkdir -p "review_cycles/cycle_0007/to_gpt"
-cat > "review_cycles/cycle_0007/to_gpt/run_events.jsonl" << RUNEVENTS
+mkdir -p "$CYCLE_4I2/to_gpt"
+cat > "$CYCLE_4I2/to_gpt/run_events.jsonl" << RUNEVENTS
 {"ts": $(date +%s), "run_id": "ci_fake_success_run", "exp": "ci_success", "cmd": "fake", "run_dir": "$FAKE_SUCCESS_RUN", "exit_code": 0, "duration": 1, "stdout_path": "$FAKE_SUCCESS_RUN/stdout.log", "stderr_path": "$FAKE_SUCCESS_RUN/stderr.log"}
 RUNEVENTS
 
-# Trigger Stop
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Success check"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-if [[ ! -f "review_cycles/cycle_0007/to_gpt/run_logs.txt" ]]; then
+if [[ ! -f "$CYCLE_4I2/to_gpt/run_logs.txt" ]]; then
     pass "run_logs.txt NOT created for success run (correct)"
 else
     fail "run_logs.txt should NOT be created for success run"
 fi
 
-# Verify run_summary.md still exists for success run
-if [[ -f "review_cycles/cycle_0007/to_gpt/run_summary.md" ]]; then
-    if grep -q "SUCCESS" "review_cycles/cycle_0007/to_gpt/run_summary.md"; then
+if [[ -f "$CYCLE_4I2/to_gpt/run_summary.md" ]]; then
+    if grep -q "SUCCESS" "$CYCLE_4I2/to_gpt/run_summary.md"; then
         pass "run_summary.md shows SUCCESS for exit=0"
     else
         fail "run_summary.md should show SUCCESS"
@@ -406,25 +398,23 @@ else
     fail "run_summary.md should exist even for success run"
 fi
 
-# Cleanup fake run
 rm -rf "$FAKE_SUCCESS_RUN"
 
-# 4j: packet.md contains file sizes
-if grep -q "B |" "review_cycles/cycle_0005/to_gpt/packet.md" 2>/dev/null; then
+# 4j: packet.md contains file sizes (use cycle_4h which has transcript)
+if grep -q "B |" "$CYCLE_4H/to_gpt/packet.md" 2>/dev/null; then
     pass "packet.md includes file sizes"
 else
     fail "packet.md should include file sizes (bytes)"
 fi
 
 # 4k: packet.md contains priority column
-if grep -q "우선순위\|필수\|권장\|선택" "review_cycles/cycle_0005/to_gpt/packet.md" 2>/dev/null; then
+if grep -q "우선순위\|필수\|권장\|선택" "$CYCLE_4H/to_gpt/packet.md" 2>/dev/null; then
     pass "packet.md includes upload priorities"
 else
     fail "packet.md should include priority (필수/권장/선택)"
 fi
 
-# 4l: Stop without last_assistant_message → transcript recovery (DETERMINISTIC)
-# Use REAL Claude Code transcript format: {type:"assistant", message:{role:"assistant", content:[{type:"text",text:"..."}]}}
+# 4l: Stop without last_assistant_message → transcript recovery
 MOCK_TRANSCRIPT_RECOVERY=$(mktemp)
 cat > "$MOCK_TRANSCRIPT_RECOVERY" << 'MOCKJSONL'
 {"type":"user","message":{"role":"user","content":"Please help me"}}
@@ -434,12 +424,12 @@ cat > "$MOCK_TRANSCRIPT_RECOVERY" << 'MOCKJSONL'
 MOCKJSONL
 
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "transcript recovery test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4L=$(get_cycle_dir)
 
-# Stop WITHOUT last_assistant_message, but WITH transcript_path
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "transcript_path": "'"$MOCK_TRANSCRIPT_RECOVERY"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-if [[ -f "review_cycles/cycle_0008/to_gpt/last_assistant_message.md" ]]; then
-    RECOVERED_MSG=$(cat "review_cycles/cycle_0008/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
+if [[ -f "$CYCLE_4L/to_gpt/last_assistant_message.md" ]]; then
+    RECOVERED_MSG=$(cat "$CYCLE_4L/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
     if echo "$RECOVERED_MSG" | grep -q "FINAL_ASSISTANT_TEXT_FROM_NESTED_TRANSCRIPT"; then
         pass "Stop recovers last_assistant_message from nested transcript"
     else
@@ -449,8 +439,7 @@ else
     fail "Stop should create last_assistant_message.md via transcript fallback"
 fi
 
-# Check that packet.md does NOT show MISSING for this case
-if grep -q "MISSING.*last_assistant_message" "review_cycles/cycle_0008/to_gpt/packet.md" 2>/dev/null; then
+if grep -q "MISSING.*last_assistant_message" "$CYCLE_4L/to_gpt/packet.md" 2>/dev/null; then
     fail "packet.md should not show MISSING when transcript recovery succeeds"
 else
     pass "packet.md shows no MISSING when transcript recovery succeeds"
@@ -459,7 +448,6 @@ fi
 rm -f "$MOCK_TRANSCRIPT_RECOVERY"
 
 # 4l-2: 0-byte last_assistant_message should show MISSING warning
-# Create transcript with only thinking blocks (no text output)
 MOCK_TRANSCRIPT_EMPTY=$(mktemp)
 cat > "$MOCK_TRANSCRIPT_EMPTY" << 'MOCKJSONL'
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Just thinking, no text output"}]}}
@@ -467,21 +455,20 @@ cat > "$MOCK_TRANSCRIPT_EMPTY" << 'MOCKJSONL'
 MOCKJSONL
 
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "empty transcript test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4L2=$(get_cycle_dir)
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "transcript_path": "'"$MOCK_TRANSCRIPT_EMPTY"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-# File should NOT exist (deleted when 0-byte)
-if [[ ! -f "review_cycles/cycle_0009/to_gpt/last_assistant_message.md" ]]; then
+if [[ ! -f "$CYCLE_4L2/to_gpt/last_assistant_message.md" ]]; then
     pass "0-byte last_assistant_message.md is deleted"
 else
-    if [[ ! -s "review_cycles/cycle_0009/to_gpt/last_assistant_message.md" ]]; then
+    if [[ ! -s "$CYCLE_4L2/to_gpt/last_assistant_message.md" ]]; then
         fail "0-byte file should be deleted"
     else
         pass "last_assistant_message.md has content (unexpected but ok)"
     fi
 fi
 
-# packet.md should show MISSING warning
-if grep -q "MISSING.*last_assistant_message" "review_cycles/cycle_0009/to_gpt/packet.md" 2>/dev/null; then
+if grep -q "MISSING.*last_assistant_message" "$CYCLE_4L2/to_gpt/packet.md" 2>/dev/null; then
     pass "packet.md shows MISSING for empty transcript extraction"
 else
     fail "packet.md should show MISSING when extraction yields nothing"
@@ -490,11 +477,9 @@ fi
 rm -f "$MOCK_TRANSCRIPT_EMPTY"
 
 # 4m: run_summary.md format verification (run_events-based)
-# Create a fake run with complete structure and run_events.jsonl entry
 FAKE_SUMMARY_RUN="$PROJECT_DIR/runs/ci_summary_test_run"
 mkdir -p "$FAKE_SUMMARY_RUN"
 
-# Create run_card.md with exit code
 cat > "$FAKE_SUMMARY_RUN/run_card.md" << 'RUNCARD'
 # Run Card: ci_summary_test_run
 
@@ -504,36 +489,31 @@ cat > "$FAKE_SUMMARY_RUN/run_card.md" << 'RUNCARD'
 | **Duration** | 5s |
 RUNCARD
 
-# Create stdout.log with more than 20 lines
 for i in $(seq 1 25); do
     echo "stdout line $i: training progress epoch $i"
 done > "$FAKE_SUMMARY_RUN/stdout.log"
 
-# Create stderr.log with warnings
 cat > "$FAKE_SUMMARY_RUN/stderr.log" << 'STDERR'
 WARNING: learning rate seems high
 INFO: GPU memory usage 50%
 DEBUG: batch processing complete
 STDERR
 
-# Trigger UserPromptSubmit to create cycle
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_summary test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4M=$(get_cycle_dir)
 
-# Create run_events.jsonl with the fake run entry
-mkdir -p "review_cycles/cycle_0010/to_gpt"
-cat > "review_cycles/cycle_0010/to_gpt/run_events.jsonl" << RUNEVENTS
+mkdir -p "$CYCLE_4M/to_gpt"
+cat > "$CYCLE_4M/to_gpt/run_events.jsonl" << RUNEVENTS
 {"ts": $(date +%s), "run_id": "ci_summary_test_run", "exp": "summary_test", "cmd": "fake training", "run_dir": "$FAKE_SUMMARY_RUN", "exit_code": 0, "duration": 5, "stdout_path": "$FAKE_SUMMARY_RUN/stdout.log", "stderr_path": "$FAKE_SUMMARY_RUN/stderr.log"}
 RUNEVENTS
 
-# Trigger Stop
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Checking run summary"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-RUN_SUMMARY_FILE="review_cycles/cycle_0010/to_gpt/run_summary.md"
+RUN_SUMMARY_FILE="$CYCLE_4M/to_gpt/run_summary.md"
 
 if [[ -f "$RUN_SUMMARY_FILE" ]]; then
     pass "run_summary.md created"
 
-    # Verify key content (new format uses table and "## Run N:" sections)
     if grep -q "ci_summary_test_run" "$RUN_SUMMARY_FILE"; then
         pass "run_summary.md contains Run ID"
     else
@@ -562,7 +542,6 @@ if [[ -f "$RUN_SUMMARY_FILE" ]]; then
         fail "run_summary.md missing stdout section"
     fi
 
-    # Table row verification (new format uses markdown table)
     if grep -q "| 1 |" "$RUN_SUMMARY_FILE" && grep -q "summary_test" "$RUN_SUMMARY_FILE"; then
         pass "run_summary.md contains run table entry"
     else
@@ -572,40 +551,40 @@ else
     fail "run_summary.md should be created"
 fi
 
-# Cleanup
 rm -rf "$FAKE_SUMMARY_RUN"
 
-# 4n: Multi-run cycle test (run_events.jsonl based)
-# Test: execute 2 runs in same cycle, verify all runs captured
+# 4n: Multi-run cycle test (run_events.jsonl based with 3 runs)
+# Test: execute 3 runs in same cycle (2 success + 1 fail), verify all runs captured
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "multi-run cycle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4N=$(get_cycle_dir)
 
 # Run 1: Success
-./scripts/run.sh --exp multi_success echo "Multi run success" > /dev/null 2>&1
+./scripts/run.sh --exp multi_success1 echo "Multi run success 1" > /dev/null 2>&1
 
 # Run 2: Failure
 ./scripts/run.sh --exp multi_fail bash -c "exit 7" 2>/dev/null || true
 
+# Run 3: Success
+./scripts/run.sh --exp multi_success2 echo "Multi run success 2" > /dev/null 2>&1
+
 # Trigger Stop
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Multi-run test done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
-# Verify run_events.jsonl exists and has 2 entries
-MULTI_RUN_EVENTS="review_cycles/cycle_0011/to_gpt/run_events.jsonl"
+MULTI_RUN_EVENTS="$CYCLE_4N/to_gpt/run_events.jsonl"
 if [[ -f "$MULTI_RUN_EVENTS" ]]; then
     EVENT_COUNT=$(wc -l < "$MULTI_RUN_EVENTS" | tr -d ' ')
-    if [[ "$EVENT_COUNT" -eq 2 ]]; then
-        pass "run_events.jsonl contains 2 entries"
+    if [[ "$EVENT_COUNT" -eq 3 ]]; then
+        pass "run_events.jsonl contains 3 entries"
     else
-        fail "run_events.jsonl should have 2 entries (got: $EVENT_COUNT)"
+        fail "run_events.jsonl should have 3 entries (got: $EVENT_COUNT)"
     fi
 
-    # Verify both runs are recorded
-    if grep -q "multi_success" "$MULTI_RUN_EVENTS" && grep -q "multi_fail" "$MULTI_RUN_EVENTS"; then
-        pass "run_events.jsonl contains both experiment names"
+    if grep -q "multi_success1" "$MULTI_RUN_EVENTS" && grep -q "multi_fail" "$MULTI_RUN_EVENTS" && grep -q "multi_success2" "$MULTI_RUN_EVENTS"; then
+        pass "run_events.jsonl contains all experiment names"
     else
         fail "run_events.jsonl missing experiment names"
     fi
 
-    # Verify exit codes are recorded
     if grep -q '"exit_code": 0' "$MULTI_RUN_EVENTS" && grep -q '"exit_code": 7' "$MULTI_RUN_EVENTS"; then
         pass "run_events.jsonl contains correct exit codes"
     else
@@ -615,19 +594,18 @@ else
     fail "run_events.jsonl should be created for multi-run cycle"
 fi
 
-# Verify run_summary.md includes both runs
-MULTI_RUN_SUMMARY="review_cycles/cycle_0011/to_gpt/run_summary.md"
+MULTI_RUN_SUMMARY="$CYCLE_4N/to_gpt/run_summary.md"
 if [[ -f "$MULTI_RUN_SUMMARY" ]]; then
-    if grep -q "multi_success" "$MULTI_RUN_SUMMARY" && grep -q "multi_fail" "$MULTI_RUN_SUMMARY"; then
-        pass "run_summary.md includes both runs"
+    if grep -q "multi_success1" "$MULTI_RUN_SUMMARY" && grep -q "multi_fail" "$MULTI_RUN_SUMMARY" && grep -q "multi_success2" "$MULTI_RUN_SUMMARY"; then
+        pass "run_summary.md includes all 3 runs"
     else
-        fail "run_summary.md should include both runs"
+        fail "run_summary.md should include all 3 runs"
     fi
 
-    if grep -q "Total runs this cycle: 2" "$MULTI_RUN_SUMMARY"; then
+    if grep -q "Total runs this cycle: 3" "$MULTI_RUN_SUMMARY"; then
         pass "run_summary.md shows correct total count"
     else
-        fail "run_summary.md should show total count: 2"
+        fail "run_summary.md should show total count: 3"
     fi
 
     if grep -q "Failed runs: 1" "$MULTI_RUN_SUMMARY"; then
@@ -639,23 +617,21 @@ else
     fail "run_summary.md should exist for multi-run cycle"
 fi
 
-# Verify run_logs.txt is created (because one run failed)
-MULTI_RUN_LOGS="review_cycles/cycle_0011/to_gpt/run_logs.txt"
+MULTI_RUN_LOGS="$CYCLE_4N/to_gpt/run_logs.txt"
 if [[ -f "$MULTI_RUN_LOGS" ]]; then
     pass "run_logs.txt created for multi-run cycle with failure"
 
-    # Should only contain the failed run
     if grep -q "multi_fail" "$MULTI_RUN_LOGS"; then
         pass "run_logs.txt contains failed run"
     else
         fail "run_logs.txt should contain failed run"
     fi
 
-    # Should NOT contain success run details
-    if grep -q "Exit Code.*7\|exit_code.*7" "$MULTI_RUN_LOGS"; then
-        pass "run_logs.txt shows failed exit code"
+    # run_logs should only have failed runs, not successes
+    if ! grep -q "multi_success1\|multi_success2" "$MULTI_RUN_LOGS"; then
+        pass "run_logs.txt excludes success runs"
     else
-        fail "run_logs.txt should show failed exit code"
+        fail "run_logs.txt should only contain failed runs"
     fi
 else
     fail "run_logs.txt should exist when any run failed"
@@ -663,6 +639,41 @@ fi
 
 # Cleanup multi-run test artifacts
 rm -rf "$PROJECT_DIR/runs/"*multi_*
+
+# 4o: Fallback test - run_summary without run_events.jsonl
+# Test that run_card.md scan works as fallback when hooks weren't approved
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "fallback test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4O=$(get_cycle_dir)
+
+# Create a fake run WITHOUT using run.sh (simulates hooks not approved)
+FAKE_FALLBACK_RUN="$PROJECT_DIR/runs/ci_fallback_test_run"
+mkdir -p "$FAKE_FALLBACK_RUN"
+cat > "$FAKE_FALLBACK_RUN/run_card.md" << 'RUNCARD'
+# Run Card: ci_fallback_test_run
+
+| Field | Value |
+|-------|-------|
+| **Exit Code** | 0 |
+| **Duration** | 2s |
+RUNCARD
+echo "Fallback stdout test" > "$FAKE_FALLBACK_RUN/stdout.log"
+touch "$FAKE_FALLBACK_RUN/run_card.md"  # Ensure recent mtime
+
+# Do NOT create run_events.jsonl - this triggers fallback
+# Trigger Stop
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Fallback test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+if [[ -f "$CYCLE_4O/to_gpt/run_summary.md" ]]; then
+    if grep -q "fallback\|ci_fallback_test_run" "$CYCLE_4O/to_gpt/run_summary.md"; then
+        pass "Fallback run_summary.md generated from run_card.md scan"
+    else
+        fail "Fallback run_summary should contain the run"
+    fi
+else
+    fail "Fallback run_summary.md should be created when no run_events.jsonl"
+fi
+
+rm -rf "$FAKE_FALLBACK_RUN"
 
 # --- Test 5: git_snap.sh ---
 info "Test 5: git_snap.sh"

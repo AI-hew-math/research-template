@@ -227,6 +227,15 @@ review_cycles/
 |------|--------|------|
 | `RS_TRANSCRIPT_TAIL_LINES` | 400 | transcript_tail 최대 라인 수 |
 | `RS_HOOK_DEBUG` | 0 | 1로 설정 시 hook_input_stop.json 저장 |
+| `RS_CYCLE_STALE_MINUTES` | 60 | cycle이 오래됐다고 판단하는 시간 (분) |
+
+### run_events.jsonl 신뢰성
+
+**Atomic Append**: `run.sh`는 fcntl 파일 락으로 동시 실행 시에도 라인이 깨지지 않습니다.
+
+**Stale Cycle 방지**: cycle 시작 후 60분이 지나면 해당 run은 `review_cycles/unattributed_run_events.jsonl`에 별도 기록됩니다. 이는 오래된 세션에서 실행된 run이 잘못된 cycle에 기록되는 것을 방지합니다.
+
+**Fallback**: hooks가 승인되지 않아 `run_events.jsonl`이 없을 때, Stop에서 `runs/*/run_card.md`를 스캔하여 최소한의 `run_summary.md`를 생성합니다.
 
 ### 사용 흐름
 
