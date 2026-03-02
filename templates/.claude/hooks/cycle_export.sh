@@ -121,6 +121,7 @@ STATE_DIR="$CWD/.claude/state"
 CYCLE_ID_FILE="$STATE_DIR/current_cycle_id"
 CYCLE_START_TS_FILE="$STATE_DIR/current_cycle_start_ts"
 CYCLE_ACTIVITY_FILE="$STATE_DIR/current_cycle_last_activity_ts"
+SESSION_ID_FILE="$STATE_DIR/current_session_id"
 # Backwards compatibility
 CYCLE_FILE_COMPAT="$STATE_DIR/current_cycle.txt"
 mkdir -p "$STATE_DIR"
@@ -145,6 +146,13 @@ case "$HOOK_EVENT" in
         echo "$CURRENT_TS" > "$CYCLE_START_TS_FILE"
         echo "$CURRENT_TS" > "$CYCLE_ACTIVITY_FILE"
 
+        # Generate session_id if not present (for multi-session tracking)
+        # Format: hostname_timestamp_random (unique per session)
+        if [[ ! -f "$SESSION_ID_FILE" ]]; then
+            SESSION_ID="$(hostname | cut -d. -f1)_$(date +%s)_$$"
+            echo "$SESSION_ID" > "$SESSION_ID_FILE"
+        fi
+
         # Write to backwards-compat file for older run.sh versions
         echo "$CURRENT_CYCLE" > "$CYCLE_FILE_COMPAT"
         ;;
@@ -154,6 +162,10 @@ case "$HOOK_EVENT" in
             echo "0" > "$CYCLE_ID_FILE"
             echo "0" > "$CYCLE_FILE_COMPAT"
         fi
+        # Generate session_id on session start (primary initialization point)
+        # Format: hostname_timestamp_pid (unique per session)
+        SESSION_ID="$(hostname | cut -d. -f1)_$(date +%s)_$$"
+        echo "$SESSION_ID" > "$SESSION_ID_FILE"
         # Read from canonical first, fallback to compat
         if [[ -f "$CYCLE_ID_FILE" ]]; then
             CURRENT_CYCLE=$(cat "$CYCLE_ID_FILE" 2>/dev/null || echo "0")
@@ -372,16 +384,38 @@ if [[ "$HOOK_EVENT" == "Stop" || "$HOOK_EVENT" == "SessionEnd" ]]; then
 
         # --- Generate transcript_tail.jsonl (upload-friendly, valid JSONL) ---
         # Strategy: error-focused extraction + recent lines, output as valid JSON Lines
+        # Optional: RS_REDACT=1 to mask sensitive information
         TAIL_LINES="${RS_TRANSCRIPT_TAIL_LINES:-400}"
 
         # Extract via python - outputs valid JSONL format
-        python3 - "$TRANSCRIPT_PATH" "$TO_GPT/transcript_tail.jsonl" "$TAIL_LINES" << 'PYEXTRACT' 2>/dev/null || true
+        python3 - "$TRANSCRIPT_PATH" "$TO_GPT/transcript_tail.jsonl" "$TAIL_LINES" "${RS_REDACT:-0}" << 'PYEXTRACT' 2>/dev/null || true
 import sys
 import json
+import re
 
 src_path = sys.argv[1]
 dst_path = sys.argv[2]
 max_lines = int(sys.argv[3])
+redact = sys.argv[4] == "1" if len(sys.argv) > 4 else False
+
+# Sensitive info redaction patterns
+REDACT_PATTERNS = [
+    (r'(OPENAI_API_KEY|ANTHROPIC_API_KEY|HF_TOKEN|HUGGING_FACE_HUB_TOKEN)=[^\s]+', r'\1=****'),
+    (r'(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)=[^\s]+', r'\1=****'),
+    (r'(GITHUB_TOKEN|GH_TOKEN|GITLAB_TOKEN)=[^\s]+', r'\1=****'),
+    (r'(DATABASE_URL|DB_PASSWORD|POSTGRES_PASSWORD)=[^\s]+', r'\1=****'),
+    (r'(sk-[a-zA-Z0-9]{20,})', '****'),
+    (r'(ghp_[a-zA-Z0-9]{36})', '****'),
+    (r'(gho_[a-zA-Z0-9]{36})', '****'),
+    (r'(password|passwd|secret|token|key|credential)[=:]\s*[^\s]+', r'\1=****'),
+]
+
+def redact_sensitive(text):
+    if not redact or not text:
+        return text
+    for pattern, replacement in REDACT_PATTERNS:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
 
 # Error patterns to prioritize (case variations)
 ERROR_PATTERNS = [
@@ -440,8 +474,8 @@ with open(dst_path, 'w') as f:
             omit_count = idx - prev_idx - 1
             f.write(json.dumps({"type": "omitted", "count": omit_count}, ensure_ascii=False) + '\n')
 
-        # Write line as JSON object (strip trailing newline from text)
-        line_text = lines[idx].rstrip('\n\r')
+        # Write line as JSON object (strip trailing newline from text, with optional redaction)
+        line_text = redact_sensitive(lines[idx].rstrip('\n\r'))
         line_obj = {
             "type": "line",
             "idx": idx,
@@ -466,15 +500,24 @@ for i, line in enumerate(sys.stdin):
     # run_events.jsonl contains all runs executed during this cycle
     # run_summary.md: always generated (lists all runs with stdout tail)
     # run_logs.txt: only generated if ANY run FAILED
+    # Session filtering: by default only shows current session's runs (RS_INCLUDE_ALL_SESSIONS=1 shows all)
     RUN_SUMMARY_MISSING=""
     RUN_EVENTS_FILE="$TO_GPT/run_events.jsonl"
     RS_RUNS_MAX="${RS_RUNS_MAX:-10}"
     RS_RUN_LOGS_MAX_BYTES="${RS_RUN_LOGS_MAX_BYTES:-51200}"
+    RS_INCLUDE_ALL_SESSIONS="${RS_INCLUDE_ALL_SESSIONS:-0}"
+
+    # Read current session_id for filtering
+    CURRENT_SESSION_ID=""
+    if [[ -f "$SESSION_ID_FILE" ]]; then
+        CURRENT_SESSION_ID=$(cat "$SESSION_ID_FILE" 2>/dev/null || echo "")
+    fi
 
     if [[ -f "$RUN_EVENTS_FILE" && -s "$RUN_EVENTS_FILE" ]]; then
-        python3 - "$RUN_EVENTS_FILE" "$TO_GPT/run_summary.md" "$TO_GPT/run_logs.txt" "$RS_RUNS_MAX" "$RS_RUN_LOGS_MAX_BYTES" << 'PYRUNEVENTS' 2>/dev/null || true
+        python3 - "$RUN_EVENTS_FILE" "$TO_GPT/run_summary.md" "$TO_GPT/run_logs.txt" "$RS_RUNS_MAX" "$RS_RUN_LOGS_MAX_BYTES" "$CURRENT_SESSION_ID" "$RS_INCLUDE_ALL_SESSIONS" "${RS_REDACT:-0}" << 'PYRUNEVENTS' 2>/dev/null || true
 import sys
 import json
+import re
 from pathlib import Path
 from datetime import datetime
 
@@ -483,35 +526,66 @@ summary_path = Path(sys.argv[2])
 runlogs_path = Path(sys.argv[3])
 max_runs = int(sys.argv[4])
 max_log_bytes = int(sys.argv[5])
+current_session_id = sys.argv[6] if len(sys.argv) > 6 else ""
+include_all_sessions = sys.argv[7] == "1" if len(sys.argv) > 7 else False
+redact = sys.argv[8] == "1" if len(sys.argv) > 8 else False
+
+# Sensitive info redaction patterns
+REDACT_PATTERNS = [
+    (r'(OPENAI_API_KEY|ANTHROPIC_API_KEY|HF_TOKEN|HUGGING_FACE_HUB_TOKEN)=[^\s]+', r'\1=****'),
+    (r'(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)=[^\s]+', r'\1=****'),
+    (r'(GITHUB_TOKEN|GH_TOKEN|GITLAB_TOKEN)=[^\s]+', r'\1=****'),
+    (r'(DATABASE_URL|DB_PASSWORD|POSTGRES_PASSWORD)=[^\s]+', r'\1=****'),
+    (r'(sk-[a-zA-Z0-9]{20,})', '****'),
+    (r'(ghp_[a-zA-Z0-9]{36})', '****'),
+    (r'(gho_[a-zA-Z0-9]{36})', '****'),
+    (r'(password|passwd|secret|token|key|credential)[=:]\s*[^\s]+', r'\1=****'),
+]
+
+def redact_sensitive(text):
+    if not redact or not text:
+        return text
+    for pattern, replacement in REDACT_PATTERNS:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
 
 def read_tail(path, n_lines):
-    """Read last n lines from file."""
+    """Read last n lines from file, with optional redaction."""
     try:
         p = Path(path)
         if p.exists():
             content = p.read_text()
             lines = content.splitlines()[-n_lines:]
+            if redact:
+                lines = [redact_sensitive(line) for line in lines]
             return lines
     except:
         pass
     return None
 
 # Load all run events
-runs = []
+all_runs = []
 try:
     with open(events_path, 'r') as f:
         for line in f:
             line = line.strip()
             if line:
                 try:
-                    runs.append(json.loads(line))
+                    all_runs.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
 except:
     pass
 
-if not runs:
+if not all_runs:
     sys.exit(0)  # No runs in this cycle
+
+# Session filtering: by default only show current session's runs
+runs = all_runs
+other_session_runs = []
+if current_session_id and not include_all_sessions:
+    runs = [r for r in all_runs if r.get('session_id', '') == current_session_id or not r.get('session_id')]
+    other_session_runs = [r for r in all_runs if r.get('session_id', '') != current_session_id and r.get('session_id')]
 
 # Limit to most recent RS_RUNS_MAX runs (by ts)
 runs.sort(key=lambda r: r.get('ts', 0), reverse=True)
@@ -525,6 +599,10 @@ failed_runs = [r for r in runs if r.get('exit_code', 0) != 0]
 lines = []
 lines.append("# Run Summary (auto-generated)")
 lines.append(f"Generated: {datetime.now().isoformat()}")
+if current_session_id and not include_all_sessions:
+    lines.append(f"Session: `{current_session_id}`")
+    if other_session_runs:
+        lines.append(f"(+{len(other_session_runs)} runs from other sessions, use RS_INCLUDE_ALL_SESSIONS=1 to include)")
 lines.append(f"Total runs this cycle: {len(runs)}")
 if failed_runs:
     lines.append(f"**Failed runs: {len(failed_runs)}**")

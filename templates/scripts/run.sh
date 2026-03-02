@@ -118,6 +118,63 @@ if command -v nvidia-smi &> /dev/null; then
     nvidia-smi > "$RUN_DIR/nvidia-smi.txt" 2>/dev/null || true
 fi
 
+# --- SNAPSHOT cycle assignment BEFORE run starts ---
+# This ensures long-running experiments stay in the cycle they started in
+# Features:
+#   - Cycle assignment is determined at RUN START (not end)
+#   - Touch last_activity_ts at both start and end
+#   - Session ID tracking for multi-session separation
+#   - Optional sensitive info redaction (RS_REDACT=1)
+STATE_DIR="$PROJECT_DIR/.claude/state"
+CYCLE_ID_FILE="$STATE_DIR/current_cycle_id"
+CYCLE_ID_FILE_COMPAT="$STATE_DIR/current_cycle.txt"  # Backwards compat
+CYCLE_ACTIVITY_FILE="$STATE_DIR/current_cycle_last_activity_ts"
+SESSION_ID_FILE="$STATE_DIR/current_session_id"
+RS_CYCLE_STALE_MINUTES="${RS_CYCLE_STALE_MINUTES:-60}"
+
+# Snapshot cycle info at run START
+SNAPSHOT_CYCLE_NUM=""
+SNAPSHOT_RUN_EVENTS_FILE=""
+SNAPSHOT_IS_STALE="false"
+SNAPSHOT_SESSION_ID=""
+
+# Read cycle ID with backwards compatibility
+if [[ -f "$CYCLE_ID_FILE" ]]; then
+    SNAPSHOT_CYCLE_NUM=$(cat "$CYCLE_ID_FILE" 2>/dev/null || echo "")
+elif [[ -f "$CYCLE_ID_FILE_COMPAT" ]]; then
+    SNAPSHOT_CYCLE_NUM=$(cat "$CYCLE_ID_FILE_COMPAT" 2>/dev/null || echo "")
+fi
+
+# Read session ID (for multi-session tracking)
+if [[ -f "$SESSION_ID_FILE" ]]; then
+    SNAPSHOT_SESSION_ID=$(cat "$SESSION_ID_FILE" 2>/dev/null || echo "")
+fi
+
+if [[ -n "$SNAPSHOT_CYCLE_NUM" && "$SNAPSHOT_CYCLE_NUM" =~ ^[0-9]+$ ]]; then
+    # Check stale at START (not end) - based on last_activity_ts
+    if [[ -f "$CYCLE_ACTIVITY_FILE" ]]; then
+        LAST_ACTIVITY_TS=$(cat "$CYCLE_ACTIVITY_FILE" 2>/dev/null || echo "0")
+        CURRENT_TS=$(date +%s)
+        STALE_SECONDS=$((RS_CYCLE_STALE_MINUTES * 60))
+        if [[ $((CURRENT_TS - LAST_ACTIVITY_TS)) -gt $STALE_SECONDS ]]; then
+            SNAPSHOT_IS_STALE="true"
+        fi
+    fi
+
+    if [[ "$SNAPSHOT_IS_STALE" == "true" ]]; then
+        # Stale cycle: will write to unattributed_run_events.jsonl
+        SNAPSHOT_RUN_EVENTS_FILE="$PROJECT_DIR/review_cycles/unattributed_run_events.jsonl"
+    else
+        # Active cycle: will write to cycle-specific run_events.jsonl
+        CYCLE_DIR=$(printf "cycle_%04d" "$SNAPSHOT_CYCLE_NUM")
+        SNAPSHOT_RUN_EVENTS_FILE="$PROJECT_DIR/review_cycles/$CYCLE_DIR/to_gpt/run_events.jsonl"
+    fi
+
+    # Touch last_activity_ts at RUN START (keeps cycle alive during long runs)
+    mkdir -p "$STATE_DIR"
+    echo "$(date +%s)" > "$CYCLE_ACTIVITY_FILE"
+fi
+
 # --- Run the command (배열로 안전하게 실행) ---
 START_TIME=$(date +%s)
 
@@ -197,62 +254,31 @@ else
 fi
 echo "[run.sh] Run dir: $RUN_DIR"
 
-# --- Append to run_events.jsonl (for cycle-based collection) ---
+# --- Append to run_events.jsonl (using SNAPSHOT from run start) ---
 # Features:
-#   - Atomic append with fcntl file locking (race-safe for concurrent runs)
-#   - Stale cycle detection: based on last_activity_ts (not start_ts)
-#   - Updates last_activity_ts on each run to keep cycle alive
-#   - 3-retry with backoff on lock failure
-#   - Backwards compatible: reads current_cycle.txt if current_cycle_id missing
-#   - Graceful fallback: if no cycle active (hooks not approved), just skip
-STATE_DIR="$PROJECT_DIR/.claude/state"
-CYCLE_ID_FILE="$STATE_DIR/current_cycle_id"
-CYCLE_ID_FILE_COMPAT="$STATE_DIR/current_cycle.txt"  # Backwards compat
-CYCLE_ACTIVITY_FILE="$STATE_DIR/current_cycle_last_activity_ts"
-RS_CYCLE_STALE_MINUTES="${RS_CYCLE_STALE_MINUTES:-60}"
+#   - Cycle assignment determined at RUN START (not end) - avoids long-run stale false positives
+#   - Touch last_activity_ts at run END (already touched at start)
+#   - Session ID tracking for multi-session separation
+#   - Optional sensitive info redaction (RS_REDACT=1)
+#   - Atomic append with fcntl file locking (3 retries with backoff)
+#   - JSON corruption detection and isolation
 
-# Read cycle ID with backwards compatibility
-CYCLE_NUM=""
-if [[ -f "$CYCLE_ID_FILE" ]]; then
-    CYCLE_NUM=$(cat "$CYCLE_ID_FILE" 2>/dev/null || echo "")
-elif [[ -f "$CYCLE_ID_FILE_COMPAT" ]]; then
-    # Fallback to old filename for backwards compatibility
-    CYCLE_NUM=$(cat "$CYCLE_ID_FILE_COMPAT" 2>/dev/null || echo "")
-fi
+if [[ -n "$SNAPSHOT_RUN_EVENTS_FILE" ]]; then
+    # Create directory for the target file
+    mkdir -p "$(dirname "$SNAPSHOT_RUN_EVENTS_FILE")"
 
-if [[ -n "$CYCLE_NUM" && "$CYCLE_NUM" =~ ^[0-9]+$ ]]; then
-    # Check if cycle is stale based on LAST ACTIVITY (not start time)
-    # This allows long experiments to continue in the same cycle
-    IS_STALE=false
-    if [[ -f "$CYCLE_ACTIVITY_FILE" ]]; then
-        LAST_ACTIVITY_TS=$(cat "$CYCLE_ACTIVITY_FILE" 2>/dev/null || echo "0")
-        CURRENT_TS=$(date +%s)
-        STALE_SECONDS=$((RS_CYCLE_STALE_MINUTES * 60))
-        if [[ $((CURRENT_TS - LAST_ACTIVITY_TS)) -gt $STALE_SECONDS ]]; then
-            IS_STALE=true
-        fi
-    fi
-
-    if [[ "$IS_STALE" == "true" ]]; then
-        # Stale cycle: write to unattributed_run_events.jsonl
-        RUN_EVENTS_FILE="$PROJECT_DIR/review_cycles/unattributed_run_events.jsonl"
-        mkdir -p "$(dirname "$RUN_EVENTS_FILE")"
-    else
-        # Active cycle: write to cycle-specific run_events.jsonl
-        CYCLE_DIR=$(printf "cycle_%04d" "$CYCLE_NUM")
-        RUN_EVENTS_FILE="$PROJECT_DIR/review_cycles/$CYCLE_DIR/to_gpt/run_events.jsonl"
-        mkdir -p "$(dirname "$RUN_EVENTS_FILE")"
-
-        # Update last_activity_ts to keep cycle alive
+    # Touch last_activity_ts at RUN END (keeps cycle alive for next run)
+    if [[ "$SNAPSHOT_IS_STALE" != "true" ]]; then
         echo "$(date +%s)" > "$CYCLE_ACTIVITY_FILE"
     fi
 
     # Atomic append with fcntl file locking (3 retries with backoff)
-    python3 - "$RUN_EVENTS_FILE" "$RUN_ID" "$EXP_NAME" "$EXIT_CODE" "$DURATION" "$RUN_DIR" "$COMMAND_STR" "$CYCLE_NUM" "$IS_STALE" << 'PYAPPEND' 2>&1 | grep -v "^$" || true
+    python3 - "$SNAPSHOT_RUN_EVENTS_FILE" "$RUN_ID" "$EXP_NAME" "$EXIT_CODE" "$DURATION" "$RUN_DIR" "$COMMAND_STR" "$SNAPSHOT_CYCLE_NUM" "$SNAPSHOT_IS_STALE" "$SNAPSHOT_SESSION_ID" "${RS_REDACT:-0}" << 'PYAPPEND' 2>&1 | grep -v "^$" || true
 import sys
 import json
 import time
 import fcntl
+import re
 import os
 
 events_path = sys.argv[1]
@@ -264,18 +290,43 @@ run_dir = sys.argv[6]
 cmd = sys.argv[7]
 cycle_num = sys.argv[8]
 is_stale = sys.argv[9] == "true"
+session_id = sys.argv[10] if len(sys.argv) > 10 else ""
+redact = sys.argv[11] == "1" if len(sys.argv) > 11 else False
+
+# Sensitive info redaction patterns
+REDACT_PATTERNS = [
+    (r'(OPENAI_API_KEY|ANTHROPIC_API_KEY|HF_TOKEN|HUGGING_FACE_HUB_TOKEN)=[^\s]+', r'\1=****'),
+    (r'(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)=[^\s]+', r'\1=****'),
+    (r'(GITHUB_TOKEN|GH_TOKEN|GITLAB_TOKEN)=[^\s]+', r'\1=****'),
+    (r'(DATABASE_URL|DB_PASSWORD|POSTGRES_PASSWORD)=[^\s]+', r'\1=****'),
+    (r'(sk-[a-zA-Z0-9]{20,})', '****'),  # OpenAI API key pattern
+    (r'(ghp_[a-zA-Z0-9]{36})', '****'),  # GitHub personal access token
+    (r'(gho_[a-zA-Z0-9]{36})', '****'),  # GitHub OAuth token
+    (r'(password|passwd|secret|token|key|credential)[=:]\s*[^\s]+', r'\1=****'),
+]
+
+def redact_sensitive(text):
+    if not redact or not text:
+        return text
+    for pattern, replacement in REDACT_PATTERNS:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
 
 entry = {
     "ts": int(time.time()),
     "run_id": run_id,
     "exp": exp,
-    "cmd": cmd,
+    "cmd": redact_sensitive(cmd),
     "run_dir": run_dir,
     "exit_code": exit_code,
     "duration": duration,
     "stdout_path": f"{run_dir}/stdout.log",
     "stderr_path": f"{run_dir}/stderr.log"
 }
+
+# Add session_id if available (for multi-session tracking)
+if session_id:
+    entry["session_id"] = session_id
 
 if is_stale:
     entry["stale_cycle"] = int(cycle_num)

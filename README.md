@@ -228,12 +228,21 @@ review_cycles/
 | `RS_TRANSCRIPT_TAIL_LINES` | 400 | transcript_tail 최대 라인 수 |
 | `RS_HOOK_DEBUG` | 0 | 1로 설정 시 hook_input_stop.json 저장 |
 | `RS_CYCLE_STALE_MINUTES` | 60 | cycle이 오래됐다고 판단하는 시간 (분) |
+| `RS_INCLUDE_ALL_SESSIONS` | 0 | 1로 설정 시 모든 세션의 run을 run_summary에 포함 |
+| `RS_REDACT` | 0 | 1로 설정 시 민감정보(API 키, 토큰 등) 자동 마스킹 |
+| `RS_RUNS_MAX` | 10 | run_summary에 포함할 최대 run 개수 |
 
 ### run_events.jsonl 신뢰성
 
-**Atomic Append**: `run.sh`는 fcntl 파일 락으로 동시 실행 시에도 라인이 깨지지 않습니다.
+**Snapshot 기반 Cycle 귀속**: `run.sh`는 run **시작 시점**에 cycle을 결정합니다. 이로 인해 60분 이상 걸리는 장시간 실험도 시작한 cycle에 올바르게 귀속됩니다.
 
-**Stale Cycle 방지**: cycle 시작 후 60분이 지나면 해당 run은 `review_cycles/unattributed_run_events.jsonl`에 별도 기록됩니다. 이는 오래된 세션에서 실행된 run이 잘못된 cycle에 기록되는 것을 방지합니다.
+**Atomic Append**: `run.sh`는 fcntl 파일 락으로 동시 실행 시에도 라인이 깨지지 않습니다. 락 실패 시 3회 재시도(100/200/400ms 백오프)를 수행하고, JSON 손상 감지 시 별도 파일로 격리합니다.
+
+**Stale Cycle 방지**: `last_activity_ts` 기준으로 60분 비활동 시 해당 run은 `review_cycles/unattributed_run_events.jsonl`에 별도 기록됩니다. 활성 cycle은 각 run 실행 시 activity가 갱신되어 장시간 연속 실험도 같은 cycle에 유지됩니다.
+
+**Multi-Session 분리**: 각 세션에 고유 `session_id`가 부여되어, 같은 프로젝트에서 여러 Claude 세션을 동시에 사용해도 run이 구분됩니다. `RS_INCLUDE_ALL_SESSIONS=1`로 모든 세션의 run을 포함할 수 있습니다.
+
+**민감정보 Redaction**: `RS_REDACT=1` 설정 시 API 키, 토큰, 비밀번호 패턴이 `****`로 자동 마스킹됩니다. (OPENAI_API_KEY, AWS_*, GITHUB_TOKEN, sk-*, ghp_* 등)
 
 **Fallback**: hooks가 승인되지 않아 `run_events.jsonl`이 없을 때, Stop에서 `runs/*/run_card.md`를 스캔하여 최소한의 `run_summary.md`를 생성합니다.
 

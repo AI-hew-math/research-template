@@ -729,6 +729,81 @@ fi
 rm -rf "$PROJECT_DIR/runs/"*long_cycle* "$PROJECT_DIR/runs/"*truly_stale*
 rm -f "$UNATTRIBUTED_EVENTS"
 
+# 4q: Snapshot-based cycle assignment (run exceeds stale threshold during execution)
+# The cycle should be determined at RUN START, not at append time
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "snapshot test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4Q=$(get_cycle_dir)
+
+# Use very short stale threshold (1 second) and sleep during run
+# Run should STILL go to the cycle because it was assigned at start
+RS_CYCLE_STALE_MINUTES=0 ./scripts/run.sh --exp snapshot_test bash -c "sleep 2; echo done" > /dev/null 2>&1
+
+SNAPSHOT_EVENTS="$CYCLE_4Q/to_gpt/run_events.jsonl"
+if [[ -f "$SNAPSHOT_EVENTS" ]] && grep -q "snapshot_test" "$SNAPSHOT_EVENTS"; then
+    pass "Snapshot-based assignment: run attributed despite exceeding stale during execution"
+else
+    UNATTRIB_CHECK="$PROJECT_DIR/review_cycles/unattributed_run_events.jsonl"
+    if [[ -f "$UNATTRIB_CHECK" ]] && grep -q "snapshot_test" "$UNATTRIB_CHECK"; then
+        fail "Snapshot bug: run went to unattributed (should use start-time assignment)"
+    else
+        fail "Snapshot test: run not found anywhere"
+    fi
+fi
+rm -rf "$PROJECT_DIR/runs/"*snapshot_test*
+rm -f "$PROJECT_DIR/review_cycles/unattributed_run_events.jsonl"
+
+# 4r: Session ID tracking and filtering
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "SessionStart"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "session test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4R=$(get_cycle_dir)
+
+# Verify session_id was created
+if [[ -f ".claude/state/current_session_id" ]]; then
+    SESSION_ID=$(cat .claude/state/current_session_id)
+    if [[ -n "$SESSION_ID" ]]; then
+        pass "Session ID created: $SESSION_ID"
+    else
+        fail "Session ID file exists but is empty"
+    fi
+else
+    fail "Session ID file not created"
+fi
+
+# Run a test and verify session_id is in run_events
+./scripts/run.sh --exp session_test echo "session tracking" > /dev/null 2>&1
+
+SESSION_EVENTS="$CYCLE_4R/to_gpt/run_events.jsonl"
+if [[ -f "$SESSION_EVENTS" ]] && grep -q "session_id" "$SESSION_EVENTS"; then
+    pass "Session ID included in run_events.jsonl"
+else
+    fail "Session ID not found in run_events.jsonl"
+fi
+rm -rf "$PROJECT_DIR/runs/"*session_test*
+
+# 4s: Sensitive info redaction (RS_REDACT=1)
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "redact test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4S=$(get_cycle_dir)
+
+# Run with sensitive-looking command (simulated API key)
+RS_REDACT=1 ./scripts/run.sh --exp redact_test bash -c 'echo "OPENAI_API_KEY=sk-1234567890abcdef"' > /dev/null 2>&1
+
+REDACT_EVENTS="$CYCLE_4S/to_gpt/run_events.jsonl"
+if [[ -f "$REDACT_EVENTS" ]]; then
+    # Check that the API key pattern is masked
+    if grep -q "sk-1234567890" "$REDACT_EVENTS"; then
+        fail "Redaction failed: API key not masked in run_events"
+    else
+        if grep -q '\*\*\*\*' "$REDACT_EVENTS"; then
+            pass "Redaction works: sensitive info masked in run_events"
+        else
+            pass "Redaction check: no sensitive pattern found (may be in stdout only)"
+        fi
+    fi
+else
+    fail "Redaction test: run_events.jsonl not created"
+fi
+rm -rf "$PROJECT_DIR/runs/"*redact_test*
+
 # --- Test 5: git_snap.sh ---
 info "Test 5: git_snap.sh"
 
