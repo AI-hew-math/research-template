@@ -154,9 +154,9 @@ info "Test 4: cycle_export.sh (UserPromptSubmit/Stop)"
 
 mkdir -p review_cycles .claude/state
 
-# Helper function: get current cycle directory path
+# Helper function: get current cycle directory path (uses canonical current_cycle_id)
 get_cycle_dir() {
-    local cycle_num=$(cat .claude/state/current_cycle.txt 2>/dev/null || echo "0")
+    local cycle_num=$(cat .claude/state/current_cycle_id 2>/dev/null || echo "0")
     printf "review_cycles/cycle_%04d" "$cycle_num"
 }
 
@@ -674,6 +674,60 @@ else
 fi
 
 rm -rf "$FAKE_FALLBACK_RUN"
+
+# 4p: Long cycle false positive prevention
+# Test that stale detection uses last_activity_ts (not start_ts)
+# A cycle with old start_ts but recent last_activity_ts should NOT be marked stale
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "long cycle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4P=$(get_cycle_dir)
+
+# Manipulate timestamps: start_ts is 2 hours ago, but last_activity_ts is NOW
+CURRENT_TS=$(date +%s)
+OLD_TS=$((CURRENT_TS - 7200))  # 2 hours ago (well beyond 60min stale threshold)
+
+echo "$OLD_TS" > .claude/state/current_cycle_start_ts
+echo "$CURRENT_TS" > .claude/state/current_cycle_last_activity_ts
+
+# Run a test - should go to current cycle (not unattributed) because last_activity_ts is recent
+./scripts/run.sh --exp long_cycle_test echo "Testing stale detection" > /dev/null 2>&1
+
+LONG_CYCLE_EVENTS="$CYCLE_4P/to_gpt/run_events.jsonl"
+UNATTRIBUTED_EVENTS="$PROJECT_DIR/review_cycles/unattributed_run_events.jsonl"
+
+if [[ -f "$LONG_CYCLE_EVENTS" ]] && grep -q "long_cycle_test" "$LONG_CYCLE_EVENTS"; then
+    pass "Long cycle with recent activity: run attributed to correct cycle"
+else
+    if [[ -f "$UNATTRIBUTED_EVENTS" ]] && grep -q "long_cycle_test" "$UNATTRIBUTED_EVENTS"; then
+        fail "Long cycle false positive: run incorrectly sent to unattributed (stale detection bug)"
+    else
+        fail "Long cycle test: run_events.jsonl not found or missing experiment"
+    fi
+fi
+
+# Test the opposite: truly stale cycle (both start_ts AND last_activity_ts are old)
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "stale cycle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4P_STALE=$(get_cycle_dir)
+
+# Both timestamps old = truly stale
+echo "$OLD_TS" > .claude/state/current_cycle_start_ts
+echo "$OLD_TS" > .claude/state/current_cycle_last_activity_ts
+
+./scripts/run.sh --exp truly_stale_test echo "Testing truly stale" > /dev/null 2>&1
+
+if [[ -f "$UNATTRIBUTED_EVENTS" ]] && grep -q "truly_stale_test" "$UNATTRIBUTED_EVENTS"; then
+    pass "Truly stale cycle: run correctly sent to unattributed"
+else
+    STALE_CYCLE_EVENTS="$CYCLE_4P_STALE/to_gpt/run_events.jsonl"
+    if [[ -f "$STALE_CYCLE_EVENTS" ]] && grep -q "truly_stale_test" "$STALE_CYCLE_EVENTS"; then
+        fail "Truly stale cycle: run incorrectly attributed (should be unattributed)"
+    else
+        fail "Truly stale test: run not found anywhere"
+    fi
+fi
+
+# Cleanup
+rm -rf "$PROJECT_DIR/runs/"*long_cycle* "$PROJECT_DIR/runs/"*truly_stale*
+rm -f "$UNATTRIBUTED_EVENTS"
 
 # --- Test 5: git_snap.sh ---
 info "Test 5: git_snap.sh"

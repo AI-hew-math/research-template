@@ -200,43 +200,60 @@ echo "[run.sh] Run dir: $RUN_DIR"
 # --- Append to run_events.jsonl (for cycle-based collection) ---
 # Features:
 #   - Atomic append with fcntl file locking (race-safe for concurrent runs)
-#   - Stale cycle detection: if cycle > 60min old, write to unattributed_run_events.jsonl
+#   - Stale cycle detection: based on last_activity_ts (not start_ts)
+#   - Updates last_activity_ts on each run to keep cycle alive
+#   - 3-retry with backoff on lock failure
+#   - Backwards compatible: reads current_cycle.txt if current_cycle_id missing
 #   - Graceful fallback: if no cycle active (hooks not approved), just skip
-CYCLE_ID_FILE="$PROJECT_DIR/.claude/state/current_cycle_id"
-CYCLE_TS_FILE="$PROJECT_DIR/.claude/state/current_cycle_start_ts"
+STATE_DIR="$PROJECT_DIR/.claude/state"
+CYCLE_ID_FILE="$STATE_DIR/current_cycle_id"
+CYCLE_ID_FILE_COMPAT="$STATE_DIR/current_cycle.txt"  # Backwards compat
+CYCLE_ACTIVITY_FILE="$STATE_DIR/current_cycle_last_activity_ts"
 RS_CYCLE_STALE_MINUTES="${RS_CYCLE_STALE_MINUTES:-60}"
 
+# Read cycle ID with backwards compatibility
+CYCLE_NUM=""
 if [[ -f "$CYCLE_ID_FILE" ]]; then
     CYCLE_NUM=$(cat "$CYCLE_ID_FILE" 2>/dev/null || echo "")
-    if [[ -n "$CYCLE_NUM" && "$CYCLE_NUM" =~ ^[0-9]+$ ]]; then
-        # Check if cycle is stale (older than RS_CYCLE_STALE_MINUTES)
-        IS_STALE=false
-        if [[ -f "$CYCLE_TS_FILE" ]]; then
-            CYCLE_START_TS=$(cat "$CYCLE_TS_FILE" 2>/dev/null || echo "0")
-            CURRENT_TS=$(date +%s)
-            STALE_SECONDS=$((RS_CYCLE_STALE_MINUTES * 60))
-            if [[ $((CURRENT_TS - CYCLE_START_TS)) -gt $STALE_SECONDS ]]; then
-                IS_STALE=true
-            fi
-        fi
+elif [[ -f "$CYCLE_ID_FILE_COMPAT" ]]; then
+    # Fallback to old filename for backwards compatibility
+    CYCLE_NUM=$(cat "$CYCLE_ID_FILE_COMPAT" 2>/dev/null || echo "")
+fi
 
-        if [[ "$IS_STALE" == "true" ]]; then
-            # Stale cycle: write to unattributed_run_events.jsonl
-            RUN_EVENTS_FILE="$PROJECT_DIR/review_cycles/unattributed_run_events.jsonl"
-            mkdir -p "$(dirname "$RUN_EVENTS_FILE")"
-        else
-            # Active cycle: write to cycle-specific run_events.jsonl
-            CYCLE_DIR=$(printf "cycle_%04d" "$CYCLE_NUM")
-            RUN_EVENTS_FILE="$PROJECT_DIR/review_cycles/$CYCLE_DIR/to_gpt/run_events.jsonl"
-            mkdir -p "$(dirname "$RUN_EVENTS_FILE")"
+if [[ -n "$CYCLE_NUM" && "$CYCLE_NUM" =~ ^[0-9]+$ ]]; then
+    # Check if cycle is stale based on LAST ACTIVITY (not start time)
+    # This allows long experiments to continue in the same cycle
+    IS_STALE=false
+    if [[ -f "$CYCLE_ACTIVITY_FILE" ]]; then
+        LAST_ACTIVITY_TS=$(cat "$CYCLE_ACTIVITY_FILE" 2>/dev/null || echo "0")
+        CURRENT_TS=$(date +%s)
+        STALE_SECONDS=$((RS_CYCLE_STALE_MINUTES * 60))
+        if [[ $((CURRENT_TS - LAST_ACTIVITY_TS)) -gt $STALE_SECONDS ]]; then
+            IS_STALE=true
         fi
+    fi
 
-        # Atomic append with fcntl file locking (macOS/Linux compatible)
-        python3 - "$RUN_EVENTS_FILE" "$RUN_ID" "$EXP_NAME" "$EXIT_CODE" "$DURATION" "$RUN_DIR" "$COMMAND_STR" "$CYCLE_NUM" "$IS_STALE" << 'PYAPPEND' 2>/dev/null || true
+    if [[ "$IS_STALE" == "true" ]]; then
+        # Stale cycle: write to unattributed_run_events.jsonl
+        RUN_EVENTS_FILE="$PROJECT_DIR/review_cycles/unattributed_run_events.jsonl"
+        mkdir -p "$(dirname "$RUN_EVENTS_FILE")"
+    else
+        # Active cycle: write to cycle-specific run_events.jsonl
+        CYCLE_DIR=$(printf "cycle_%04d" "$CYCLE_NUM")
+        RUN_EVENTS_FILE="$PROJECT_DIR/review_cycles/$CYCLE_DIR/to_gpt/run_events.jsonl"
+        mkdir -p "$(dirname "$RUN_EVENTS_FILE")"
+
+        # Update last_activity_ts to keep cycle alive
+        echo "$(date +%s)" > "$CYCLE_ACTIVITY_FILE"
+    fi
+
+    # Atomic append with fcntl file locking (3 retries with backoff)
+    python3 - "$RUN_EVENTS_FILE" "$RUN_ID" "$EXP_NAME" "$EXIT_CODE" "$DURATION" "$RUN_DIR" "$COMMAND_STR" "$CYCLE_NUM" "$IS_STALE" << 'PYAPPEND' 2>&1 | grep -v "^$" || true
 import sys
 import json
 import time
 import fcntl
+import os
 
 events_path = sys.argv[1]
 run_id = sys.argv[2]
@@ -260,24 +277,60 @@ entry = {
     "stderr_path": f"{run_dir}/stderr.log"
 }
 
-# Add cycle info for unattributed runs
 if is_stale:
     entry["stale_cycle"] = int(cycle_num)
-    entry["note"] = "cycle was stale (>60min), run unattributed"
+    entry["note"] = "cycle was stale (>60min inactivity), run unattributed"
 
-# Atomic append with exclusive lock
-# Prepare line BEFORE acquiring lock to minimize lock hold time
 line = json.dumps(entry, ensure_ascii=False) + '\n'
 
-with open(events_path, 'a') as f:
-    fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Exclusive lock
+# Atomic append with 3 retries and exponential backoff
+MAX_RETRIES = 3
+BACKOFF_BASE = 0.1  # 100ms, 200ms, 400ms
+
+append_success = False
+for attempt in range(MAX_RETRIES):
     try:
-        f.write(line)
-        f.flush()  # Ensure write is complete before releasing lock
-    finally:
-        fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # Release lock
+        with open(events_path, 'a') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                f.write(line)
+                f.flush()
+                append_success = True
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        break
+    except (IOError, OSError) as e:
+        if attempt < MAX_RETRIES - 1:
+            time.sleep(BACKOFF_BASE * (2 ** attempt))
+        else:
+            # Final failure: warn to stderr (quiet)
+            print(f"[run.sh] WARN: run_events append failed after {MAX_RETRIES} retries: {e}", file=sys.stderr)
+
+# Optional: validate last line wasn't corrupted
+if append_success:
+    try:
+        with open(events_path, 'r') as f:
+            lines = f.readlines()
+            if lines:
+                last_line = lines[-1].strip()
+                if last_line:
+                    json.loads(last_line)  # Validate JSON
+    except json.JSONDecodeError:
+        # Last line is corrupted - move to corrupt file
+        corrupt_path = events_path.replace('.jsonl', '_corrupt.jsonl')
+        try:
+            with open(corrupt_path, 'a') as cf:
+                cf.write(f"# Corrupted at {time.time()}\n")
+                cf.write(lines[-1] if lines else "")
+            # Remove corrupted line from original (rewrite without last line)
+            with open(events_path, 'w') as f:
+                f.writelines(lines[:-1])
+            print(f"[run.sh] WARN: corrupted line moved to {corrupt_path}", file=sys.stderr)
+        except:
+            pass
+    except:
+        pass  # File read failed, ignore
 PYAPPEND
-    fi
 fi
 
 # --- Git snapshot (opt-in via RS_GIT_SNAP=1) ---

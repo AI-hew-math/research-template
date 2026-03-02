@@ -115,42 +115,62 @@ if [[ -z "$CWD" || ! -d "$CWD" ]]; then
     exit 0  # Graceful exit if cwd is invalid
 fi
 
-# --- State directory and cycle file ---
+# --- State directory and cycle files ---
 STATE_DIR="$CWD/.claude/state"
-CYCLE_FILE="$STATE_DIR/current_cycle.txt"
+# Canonical names
+CYCLE_ID_FILE="$STATE_DIR/current_cycle_id"
+CYCLE_START_TS_FILE="$STATE_DIR/current_cycle_start_ts"
+CYCLE_ACTIVITY_FILE="$STATE_DIR/current_cycle_last_activity_ts"
+# Backwards compatibility
+CYCLE_FILE_COMPAT="$STATE_DIR/current_cycle.txt"
 mkdir -p "$STATE_DIR"
 
 # --- Handle cycle number based on event type ---
 case "$HOOK_EVENT" in
     "UserPromptSubmit")
         # Increment cycle on each new prompt
-        if [[ -f "$CYCLE_FILE" ]]; then
-            CURRENT_CYCLE=$(cat "$CYCLE_FILE" 2>/dev/null || echo "0")
+        # Read from canonical file first, fallback to compat
+        if [[ -f "$CYCLE_ID_FILE" ]]; then
+            CURRENT_CYCLE=$(cat "$CYCLE_ID_FILE" 2>/dev/null || echo "0")
+        elif [[ -f "$CYCLE_FILE_COMPAT" ]]; then
+            CURRENT_CYCLE=$(cat "$CYCLE_FILE_COMPAT" 2>/dev/null || echo "0")
         else
             CURRENT_CYCLE=0
         fi
         CURRENT_CYCLE=$((CURRENT_CYCLE + 1))
-        echo "$CURRENT_CYCLE" > "$CYCLE_FILE"
 
-        # Record cycle metadata for run.sh to use
-        echo "$CURRENT_CYCLE" > "$STATE_DIR/current_cycle_id"
-        date +%s > "$STATE_DIR/current_cycle_start_ts"
+        # Write to canonical files
+        echo "$CURRENT_CYCLE" > "$CYCLE_ID_FILE"
+        CURRENT_TS=$(date +%s)
+        echo "$CURRENT_TS" > "$CYCLE_START_TS_FILE"
+        echo "$CURRENT_TS" > "$CYCLE_ACTIVITY_FILE"
+
+        # Write to backwards-compat file for older run.sh versions
+        echo "$CURRENT_CYCLE" > "$CYCLE_FILE_COMPAT"
         ;;
     "SessionStart")
         # Initialize only if no cycle file exists (don't increment)
-        if [[ ! -f "$CYCLE_FILE" ]]; then
-            echo "0" > "$CYCLE_FILE"
+        if [[ ! -f "$CYCLE_ID_FILE" && ! -f "$CYCLE_FILE_COMPAT" ]]; then
+            echo "0" > "$CYCLE_ID_FILE"
+            echo "0" > "$CYCLE_FILE_COMPAT"
         fi
-        CURRENT_CYCLE=$(cat "$CYCLE_FILE" 2>/dev/null || echo "0")
+        # Read from canonical first, fallback to compat
+        if [[ -f "$CYCLE_ID_FILE" ]]; then
+            CURRENT_CYCLE=$(cat "$CYCLE_ID_FILE" 2>/dev/null || echo "0")
+        else
+            CURRENT_CYCLE=$(cat "$CYCLE_FILE_COMPAT" 2>/dev/null || echo "0")
+        fi
         # If cycle is 0, this is first session - wait for first prompt
         if [[ "$CURRENT_CYCLE" == "0" ]]; then
             exit 0  # Don't create cycle_0000
         fi
         ;;
     "Stop"|"SessionEnd")
-        # Read existing cycle (don't increment)
-        if [[ -f "$CYCLE_FILE" ]]; then
-            CURRENT_CYCLE=$(cat "$CYCLE_FILE" 2>/dev/null || echo "0")
+        # Read existing cycle (don't increment) - canonical first, then compat
+        if [[ -f "$CYCLE_ID_FILE" ]]; then
+            CURRENT_CYCLE=$(cat "$CYCLE_ID_FILE" 2>/dev/null || echo "0")
+        elif [[ -f "$CYCLE_FILE_COMPAT" ]]; then
+            CURRENT_CYCLE=$(cat "$CYCLE_FILE_COMPAT" 2>/dev/null || echo "0")
         else
             CURRENT_CYCLE=0
         fi
@@ -160,12 +180,15 @@ case "$HOOK_EVENT" in
         fi
         ;;
     *)
-        # Unknown event - try to read existing cycle
-        if [[ -f "$CYCLE_FILE" ]]; then
-            CURRENT_CYCLE=$(cat "$CYCLE_FILE" 2>/dev/null || echo "1")
+        # Unknown event - try to read existing cycle (canonical first)
+        if [[ -f "$CYCLE_ID_FILE" ]]; then
+            CURRENT_CYCLE=$(cat "$CYCLE_ID_FILE" 2>/dev/null || echo "1")
+        elif [[ -f "$CYCLE_FILE_COMPAT" ]]; then
+            CURRENT_CYCLE=$(cat "$CYCLE_FILE_COMPAT" 2>/dev/null || echo "1")
         else
             CURRENT_CYCLE=1
-            echo "$CURRENT_CYCLE" > "$CYCLE_FILE"
+            echo "$CURRENT_CYCLE" > "$CYCLE_ID_FILE"
+            echo "$CURRENT_CYCLE" > "$CYCLE_FILE_COMPAT"
         fi
         ;;
 esac
@@ -649,6 +672,15 @@ max_runs = int(sys.argv[4])
 if not runs_dir.exists():
     sys.exit(0)
 
+# Multiple patterns for exit code extraction (fallback robustness)
+EXIT_PATTERNS = [
+    r'\*\*Exit Code\*\*\s*\|\s*(\d+)',           # Markdown table: **Exit Code** | 42
+    r'Exit Code[:\s]+(\d+)',                       # Plain text: Exit Code: 42
+    r'exit[_\s]code[:\s=]+(\d+)',                  # Various: exit_code=42, exit code: 42
+    r'exited with (\d+)',                          # Prose: exited with 42
+    r'return code[:\s]+(\d+)',                     # Alternative: return code: 42
+]
+
 # Find run directories with run_card.md
 run_dirs = []
 for run_card in runs_dir.glob("*/run_card.md"):
@@ -676,22 +708,27 @@ def read_tail(path, n_lines):
     return None
 
 def parse_exit_code(run_card_path):
+    """Parse exit code using multiple patterns for robustness."""
     try:
         content = run_card_path.read_text()
-        match = re.search(r'\*\*Exit Code\*\*\s*\|\s*(\d+)', content)
-        if match:
-            return int(match.group(1))
+        for pattern in EXIT_PATTERNS:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
     except:
         pass
     return None
 
-# Generate summary
+# Generate summary with FALLBACK MODE banner
 lines = []
-lines.append("# Run Summary (fallback - no run_events.jsonl)")
+lines.append("# Run Summary")
+lines.append("")
+lines.append("> **⚠️ FALLBACK MODE**: run_events.jsonl not found.")
+lines.append("> This summary was generated by scanning run_card.md files.")
+lines.append("> For accurate tracking, approve hooks to enable run_events.jsonl.")
+lines.append("")
 lines.append(f"Generated: {datetime.now().isoformat()}")
 lines.append(f"Total runs detected: {len(run_dirs)}")
-lines.append("> **Note**: This summary was generated by scanning run_card.md files.")
-lines.append("> For accurate tracking, approve hooks to enable run_events.jsonl.")
 lines.append("")
 
 lines.append("## Runs")
@@ -715,11 +752,11 @@ for i, (mtime, run_dir, run_card) in enumerate(run_dirs, 1):
     lines.append(f"| {i} | `{run_id_short}` | {exit_str} | {status} |")
 
 if failed_count > 0:
-    lines.insert(3, f"**Failed runs: {failed_count}**")
+    lines.insert(8, f"**Failed runs: {failed_count}**")
 
 lines.append("")
 
-# Per-run details
+# Per-run details with both stdout AND stderr
 for i, (mtime, run_dir, run_card) in enumerate(run_dirs, 1):
     run_id = run_dir.name
     exit_code = parse_exit_code(run_card)
@@ -731,6 +768,7 @@ for i, (mtime, run_dir, run_card) in enumerate(run_dirs, 1):
         lines.append(f"- **Exit Code**: {exit_code}")
     lines.append("")
 
+    # stdout tail (20 lines)
     stdout_lines = read_tail(run_dir / "stdout.log", 20)
     lines.append("### stdout (last 20 lines)")
     if stdout_lines:
@@ -739,6 +777,17 @@ for i, (mtime, run_dir, run_card) in enumerate(run_dirs, 1):
         lines.append("```")
     else:
         lines.append("(no stdout.log)")
+    lines.append("")
+
+    # stderr tail (50 lines) - especially useful for failed runs
+    stderr_lines = read_tail(run_dir / "stderr.log", 50)
+    lines.append("### stderr (last 50 lines)")
+    if stderr_lines and any(l.strip() for l in stderr_lines):
+        lines.append("```")
+        lines.extend(stderr_lines)
+        lines.append("```")
+    else:
+        lines.append("(empty or no stderr.log)")
     lines.append("")
 
 summary_path.write_text('\n'.join(lines))
