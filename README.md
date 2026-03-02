@@ -231,6 +231,9 @@ review_cycles/
 | `RS_INCLUDE_ALL_SESSIONS` | 0 | 1로 설정 시 모든 세션의 run을 run_summary에 포함 |
 | `RS_REDACT` | 0 | 1로 설정 시 민감정보(API 키, 토큰 등) 자동 마스킹 |
 | `RS_RUNS_MAX` | 10 | run_summary에 포함할 최대 run 개수 |
+| `RS_SAVE_ENV` | 0 | 1로 설정 시 env.txt 저장 (allowlist만 저장) |
+| `RS_BUNDLE_MAX_KB` | 80 | gpt_bundle.md 최대 크기 (KB) |
+| `RS_BUNDLE_DIFF_MAX_LINES` | 300 | gpt_bundle.md 내 git diff 최대 라인 수 |
 
 ### run_events.jsonl 신뢰성
 
@@ -240,11 +243,28 @@ review_cycles/
 
 **Stale Cycle 방지**: `last_activity_ts` 기준으로 60분 비활동 시 해당 run은 `review_cycles/unattributed_run_events.jsonl`에 별도 기록됩니다. 활성 cycle은 각 run 실행 시 activity가 갱신되어 장시간 연속 실험도 같은 cycle에 유지됩니다.
 
-**Multi-Session 분리**: 각 세션에 고유 `session_id`가 부여되어, 같은 프로젝트에서 여러 Claude 세션을 동시에 사용해도 run이 구분됩니다. `RS_INCLUDE_ALL_SESSIONS=1`로 모든 세션의 run을 포함할 수 있습니다.
+**Multi-Session 분리**: hook payload에서 session_id를 추출하여 세션별로 run을 분리합니다. 전역 파일에 의존하지 않아 경쟁 상태가 발생하지 않습니다. `RS_INCLUDE_ALL_SESSIONS=1`로 모든 세션의 run을 포함할 수 있습니다.
 
-**민감정보 Redaction**: `RS_REDACT=1` 설정 시 API 키, 토큰, 비밀번호 패턴이 `****`로 자동 마스킹됩니다. (OPENAI_API_KEY, AWS_*, GITHUB_TOKEN, sk-*, ghp_* 등)
+**정합성 검사**: Stop에서 run_events.jsonl을 스캔하여 유효한 라인만 `run_events.clean.jsonl`로 분리하고, 손상된 라인은 `run_events.bad.jsonl`로 격리합니다. packet.md에 손상 경고가 표시됩니다.
+
+**민감정보 보호**:
+- `env.txt`는 기본 OFF (`RS_SAVE_ENV=0`). 활성화 시에도 PATH, CUDA 등 안전한 변수만 저장
+- `RS_REDACT=1` 설정 시 API 키, 토큰, 비밀번호 패턴이 `****`로 마스킹
 
 **Fallback**: hooks가 승인되지 않아 `run_events.jsonl`이 없을 때, Stop에서 `runs/*/run_card.md`를 스캔하여 최소한의 `run_summary.md`를 생성합니다.
+
+### gpt_bundle.md (단일 파일 업로드)
+
+GPT에 단일 파일만 업로드하고 싶을 때 `gpt_bundle.md`를 사용합니다. 포함 내용:
+
+1. 메타데이터 (cycle, timestamp)
+2. Agent 응답 (있으면)
+3. Run Summary (필수)
+4. 실패 로그 요약 (실패 시)
+5. Git diff (변경 시, 최대 300줄)
+6. Transcript tail (공간 여유 시)
+
+기본 80KB 제한으로 자동 truncation됩니다.
 
 ### 사용 흐름
 

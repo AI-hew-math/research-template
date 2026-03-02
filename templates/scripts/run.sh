@@ -105,8 +105,13 @@ CWD=$(pwd)
     fi
 } > "$RUN_DIR/meta.txt"
 
-# env.txt (선택적)
-env > "$RUN_DIR/env.txt" 2>/dev/null || true
+# env.txt (기본 OFF - 민감정보 유출 방지)
+# RS_SAVE_ENV=1로 활성화, 활성화 시에도 allowlist만 저장
+if [[ "${RS_SAVE_ENV:-0}" == "1" ]]; then
+    # Safe environment variables allowlist (no secrets)
+    ENV_ALLOWLIST="PATH|HOME|USER|SHELL|PWD|LANG|LC_|TERM|HOSTNAME|CUDA_VISIBLE_DEVICES|SLURM_|CONDA_|VIRTUAL_ENV|PYTHONPATH|LD_LIBRARY_PATH"
+    env | grep -E "^($ENV_ALLOWLIST)" > "$RUN_DIR/env.txt" 2>/dev/null || true
+fi
 
 # git_diff.patch (git repo일 때만)
 if [[ "$GIT_SHA" != "nogit" ]]; then
@@ -129,7 +134,7 @@ STATE_DIR="$PROJECT_DIR/.claude/state"
 CYCLE_ID_FILE="$STATE_DIR/current_cycle_id"
 CYCLE_ID_FILE_COMPAT="$STATE_DIR/current_cycle.txt"  # Backwards compat
 CYCLE_ACTIVITY_FILE="$STATE_DIR/current_cycle_last_activity_ts"
-SESSION_ID_FILE="$STATE_DIR/current_session_id"
+LATEST_SESSION_FILE="$STATE_DIR/latest_session_id"
 RS_CYCLE_STALE_MINUTES="${RS_CYCLE_STALE_MINUTES:-60}"
 
 # Snapshot cycle info at run START
@@ -145,9 +150,10 @@ elif [[ -f "$CYCLE_ID_FILE_COMPAT" ]]; then
     SNAPSHOT_CYCLE_NUM=$(cat "$CYCLE_ID_FILE_COMPAT" 2>/dev/null || echo "")
 fi
 
-# Read session ID (for multi-session tracking)
-if [[ -f "$SESSION_ID_FILE" ]]; then
-    SNAPSHOT_SESSION_ID=$(cat "$SESSION_ID_FILE" 2>/dev/null || echo "")
+# Read session ID from latest_session_id (set by cycle_export.sh)
+# This is the session that most recently submitted a prompt
+if [[ -f "$LATEST_SESSION_FILE" ]]; then
+    SNAPSHOT_SESSION_ID=$(cat "$LATEST_SESSION_FILE" 2>/dev/null || echo "")
 fi
 
 if [[ -n "$SNAPSHOT_CYCLE_NUM" && "$SNAPSHOT_CYCLE_NUM" =~ ^[0-9]+$ ]]; then

@@ -757,16 +757,16 @@ echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "SessionStart"}' | ./.claud
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "session test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4R=$(get_cycle_dir)
 
-# Verify session_id was created
-if [[ -f ".claude/state/current_session_id" ]]; then
-    SESSION_ID=$(cat .claude/state/current_session_id)
+# Verify session_id was created (now uses latest_session_id instead of global file)
+if [[ -f ".claude/state/latest_session_id" ]]; then
+    SESSION_ID=$(cat .claude/state/latest_session_id)
     if [[ -n "$SESSION_ID" ]]; then
         pass "Session ID created: $SESSION_ID"
     else
         fail "Session ID file exists but is empty"
     fi
 else
-    fail "Session ID file not created"
+    fail "Session ID file not created (latest_session_id)"
 fi
 
 # Run a test and verify session_id is in run_events
@@ -803,6 +803,117 @@ else
     fail "Redaction test: run_events.jsonl not created"
 fi
 rm -rf "$PROJECT_DIR/runs/"*redact_test*
+
+# 4t: env.txt default OFF (security)
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "env test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+# Run WITHOUT RS_SAVE_ENV - env.txt should NOT be created
+./scripts/run.sh --exp env_off_test echo "testing env off" > /dev/null 2>&1
+ENV_OFF_RUN=$(ls -td "$PROJECT_DIR/runs/"*env_off_test* 2>/dev/null | head -1)
+if [[ -f "$ENV_OFF_RUN/env.txt" ]]; then
+    fail "env.txt created when RS_SAVE_ENV not set (should be OFF by default)"
+else
+    pass "env.txt default OFF: file not created"
+fi
+
+# Run WITH RS_SAVE_ENV=1 - env.txt should be created with allowlist only
+RS_SAVE_ENV=1 ./scripts/run.sh --exp env_on_test echo "testing env on" > /dev/null 2>&1
+ENV_ON_RUN=$(ls -td "$PROJECT_DIR/runs/"*env_on_test* 2>/dev/null | head -1)
+if [[ -f "$ENV_ON_RUN/env.txt" ]]; then
+    # Should only contain safe vars (PATH, CUDA, etc), not secrets
+    if grep -qiE "(API_KEY|SECRET|TOKEN|PASSWORD)" "$ENV_ON_RUN/env.txt" 2>/dev/null; then
+        fail "env.txt contains sensitive-looking vars (should use allowlist)"
+    else
+        pass "env.txt created with allowlist when RS_SAVE_ENV=1"
+    fi
+else
+    fail "env.txt not created when RS_SAVE_ENV=1"
+fi
+rm -rf "$PROJECT_DIR/runs/"*env_*_test*
+
+# 4u: run_events.jsonl integrity (clean/bad separation)
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "integrity test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4U=$(get_cycle_dir)
+
+# Create a run_events.jsonl with some valid and some invalid lines
+./scripts/run.sh --exp integrity_test echo "valid run" > /dev/null 2>&1
+INTEGRITY_EVENTS="$CYCLE_4U/to_gpt/run_events.jsonl"
+
+# Manually append a corrupted line
+echo "this is not valid json {broken" >> "$INTEGRITY_EVENTS"
+echo '{"valid": "json", "but": "no run_id"}' >> "$INTEGRITY_EVENTS"
+
+# Trigger Stop to process integrity
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "integrity test done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+# Check clean file exists and has valid content
+if [[ -f "$CYCLE_4U/to_gpt/run_events.clean.jsonl" ]]; then
+    CLEAN_LINES=$(wc -l < "$CYCLE_4U/to_gpt/run_events.clean.jsonl" | tr -d ' ')
+    if [[ "$CLEAN_LINES" -ge 1 ]]; then
+        pass "run_events.clean.jsonl created with valid lines"
+    else
+        fail "run_events.clean.jsonl is empty"
+    fi
+else
+    fail "run_events.clean.jsonl not created"
+fi
+
+# Check bad file exists (we added corrupted lines)
+if [[ -f "$CYCLE_4U/to_gpt/run_events.bad.jsonl" ]]; then
+    if grep -q "broken" "$CYCLE_4U/to_gpt/run_events.bad.jsonl"; then
+        pass "run_events.bad.jsonl contains corrupted lines"
+    else
+        fail "run_events.bad.jsonl missing corrupted content"
+    fi
+else
+    fail "run_events.bad.jsonl not created for corrupted input"
+fi
+
+# Check packet.md has warning
+if grep -q "corrupted\|WARNING" "$CYCLE_4U/to_gpt/packet.md" 2>/dev/null; then
+    pass "packet.md shows corruption warning"
+else
+    fail "packet.md missing corruption warning"
+fi
+rm -rf "$PROJECT_DIR/runs/"*integrity_test*
+
+# 4v: gpt_bundle.md generation
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "bundle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4V=$(get_cycle_dir)
+
+./scripts/run.sh --exp bundle_success echo "bundle success" > /dev/null 2>&1
+./scripts/run.sh --exp bundle_fail bash -c "echo 'error output' >&2; exit 1" 2>/dev/null || true
+
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "bundle test response with content"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+BUNDLE_FILE="$CYCLE_4V/to_gpt/gpt_bundle.md"
+if [[ -f "$BUNDLE_FILE" ]]; then
+    pass "gpt_bundle.md created"
+
+    # Check structure
+    if grep -q "GPT Review Bundle" "$BUNDLE_FILE"; then
+        pass "gpt_bundle.md has header"
+    else
+        fail "gpt_bundle.md missing header"
+    fi
+
+    if grep -q "Run Summary" "$BUNDLE_FILE"; then
+        pass "gpt_bundle.md includes run_summary"
+    else
+        fail "gpt_bundle.md missing run_summary"
+    fi
+
+    # Check size limit (should be under 80KB by default)
+    BUNDLE_SIZE=$(wc -c < "$BUNDLE_FILE" | tr -d ' ')
+    if [[ "$BUNDLE_SIZE" -lt 82000 ]]; then
+        pass "gpt_bundle.md size within limit (${BUNDLE_SIZE} bytes)"
+    else
+        fail "gpt_bundle.md exceeds 80KB limit (${BUNDLE_SIZE} bytes)"
+    fi
+else
+    fail "gpt_bundle.md not created"
+fi
+rm -rf "$PROJECT_DIR/runs/"*bundle_*
 
 # --- Test 5: git_snap.sh ---
 info "Test 5: git_snap.sh"

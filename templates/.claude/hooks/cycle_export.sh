@@ -95,8 +95,17 @@ try:
     print(data.get('hook_event_name', ''))
     print(data.get('task_subject', ''))
     print(str(data.get('stop_hook_active', '')))
+    # Session ID from payload (multiple key variations for compatibility)
+    session_id = (
+        data.get('session_id') or
+        data.get('sessionId') or
+        data.get('session') or
+        data.get('uuid') or
+        ''
+    )
+    print(session_id)
 except Exception as e:
-    for _ in range(5):
+    for _ in range(6):
         print('')
 PYEOF
 )
@@ -107,6 +116,7 @@ TRANSCRIPT_PATH=$(echo "$PARSED" | sed -n '2p')
 HOOK_EVENT=$(echo "$PARSED" | sed -n '3p')
 TASK_SUBJECT=$(echo "$PARSED" | sed -n '4p')
 STOP_HOOK_ACTIVE=$(echo "$PARSED" | sed -n '5p')
+PAYLOAD_SESSION_ID=$(echo "$PARSED" | sed -n '6p')
 
 # Multiline content will be read from temp files when needed
 
@@ -121,10 +131,30 @@ STATE_DIR="$CWD/.claude/state"
 CYCLE_ID_FILE="$STATE_DIR/current_cycle_id"
 CYCLE_START_TS_FILE="$STATE_DIR/current_cycle_start_ts"
 CYCLE_ACTIVITY_FILE="$STATE_DIR/current_cycle_last_activity_ts"
-SESSION_ID_FILE="$STATE_DIR/current_session_id"
 # Backwards compatibility
 CYCLE_FILE_COMPAT="$STATE_DIR/current_cycle.txt"
 mkdir -p "$STATE_DIR"
+
+# --- Session ID handling (race-condition safe) ---
+# Priority: 1) Payload session_id, 2) Generate unique per-invocation (only for session/prompt events)
+# For Stop events without payload session_id, we don't filter by session (include all runs)
+if [[ -n "$PAYLOAD_SESSION_ID" ]]; then
+    CURRENT_SESSION_ID="$PAYLOAD_SESSION_ID"
+elif [[ "$HOOK_EVENT" == "SessionStart" || "$HOOK_EVENT" == "UserPromptSubmit" ]]; then
+    # Generate unique session ID for new sessions/prompts
+    CURRENT_SESSION_ID="$(hostname | cut -d. -f1)_$(date +%s)_$$_$RANDOM"
+else
+    # Stop/other events without payload session_id: don't filter by session
+    CURRENT_SESSION_ID=""
+fi
+
+# Per-session state directory (avoids race conditions)
+SESSION_STATE_DIR="$STATE_DIR/sessions/$CURRENT_SESSION_ID"
+mkdir -p "$SESSION_STATE_DIR"
+
+# Store this session's cycle mapping (for run.sh to use)
+# This is session-local, not global
+SESSION_CYCLE_FILE="$SESSION_STATE_DIR/cycle_id"
 
 # --- Handle cycle number based on event type ---
 case "$HOOK_EVENT" in
@@ -140,21 +170,22 @@ case "$HOOK_EVENT" in
         fi
         CURRENT_CYCLE=$((CURRENT_CYCLE + 1))
 
-        # Write to canonical files
+        # Write to canonical files (global cycle counter)
         echo "$CURRENT_CYCLE" > "$CYCLE_ID_FILE"
         CURRENT_TS=$(date +%s)
         echo "$CURRENT_TS" > "$CYCLE_START_TS_FILE"
         echo "$CURRENT_TS" > "$CYCLE_ACTIVITY_FILE"
 
-        # Generate session_id if not present (for multi-session tracking)
-        # Format: hostname_timestamp_random (unique per session)
-        if [[ ! -f "$SESSION_ID_FILE" ]]; then
-            SESSION_ID="$(hostname | cut -d. -f1)_$(date +%s)_$$"
-            echo "$SESSION_ID" > "$SESSION_ID_FILE"
-        fi
+        # Store session-specific cycle mapping (for this session's Stop to use)
+        echo "$CURRENT_CYCLE" > "$SESSION_CYCLE_FILE"
+        echo "$CURRENT_SESSION_ID" > "$SESSION_STATE_DIR/session_id"
 
         # Write to backwards-compat file for older run.sh versions
         echo "$CURRENT_CYCLE" > "$CYCLE_FILE_COMPAT"
+
+        # Also write current session to a "latest" file for run.sh fallback
+        # But run.sh should prefer reading from payload when available
+        echo "$CURRENT_SESSION_ID" > "$STATE_DIR/latest_session_id"
         ;;
     "SessionStart")
         # Initialize only if no cycle file exists (don't increment)
@@ -162,10 +193,9 @@ case "$HOOK_EVENT" in
             echo "0" > "$CYCLE_ID_FILE"
             echo "0" > "$CYCLE_FILE_COMPAT"
         fi
-        # Generate session_id on session start (primary initialization point)
-        # Format: hostname_timestamp_pid (unique per session)
-        SESSION_ID="$(hostname | cut -d. -f1)_$(date +%s)_$$"
-        echo "$SESSION_ID" > "$SESSION_ID_FILE"
+        # Store session ID in per-session state (already set up above)
+        echo "$CURRENT_SESSION_ID" > "$SESSION_STATE_DIR/session_id"
+        echo "$CURRENT_SESSION_ID" > "$STATE_DIR/latest_session_id"
         # Read from canonical first, fallback to compat
         if [[ -f "$CYCLE_ID_FILE" ]]; then
             CURRENT_CYCLE=$(cat "$CYCLE_ID_FILE" 2>/dev/null || echo "0")
@@ -496,25 +526,73 @@ for i, line in enumerate(sys.stdin):
         fi
     fi
 
-    # --- Generate run_summary.md AND run_logs.txt from run_events.jsonl ---
-    # run_events.jsonl contains all runs executed during this cycle
-    # run_summary.md: always generated (lists all runs with stdout tail)
-    # run_logs.txt: only generated if ANY run FAILED
-    # Session filtering: by default only shows current session's runs (RS_INCLUDE_ALL_SESSIONS=1 shows all)
+    # --- Run events integrity check and clean/bad separation ---
+    # Scan run_events.jsonl, separate valid lines from corrupted ones
     RUN_SUMMARY_MISSING=""
     RUN_EVENTS_FILE="$TO_GPT/run_events.jsonl"
+    RUN_EVENTS_CLEAN="$TO_GPT/run_events.clean.jsonl"
+    RUN_EVENTS_BAD="$TO_GPT/run_events.bad.jsonl"
     RS_RUNS_MAX="${RS_RUNS_MAX:-10}"
     RS_RUN_LOGS_MAX_BYTES="${RS_RUN_LOGS_MAX_BYTES:-51200}"
     RS_INCLUDE_ALL_SESSIONS="${RS_INCLUDE_ALL_SESSIONS:-0}"
+    BAD_LINE_COUNT=0
 
-    # Read current session_id for filtering
-    CURRENT_SESSION_ID=""
-    if [[ -f "$SESSION_ID_FILE" ]]; then
-        CURRENT_SESSION_ID=$(cat "$SESSION_ID_FILE" 2>/dev/null || echo "")
-    fi
+    # Session ID is already set from payload (CURRENT_SESSION_ID)
+    # No need to read from global file - avoids race condition
 
     if [[ -f "$RUN_EVENTS_FILE" && -s "$RUN_EVENTS_FILE" ]]; then
-        python3 - "$RUN_EVENTS_FILE" "$TO_GPT/run_summary.md" "$TO_GPT/run_logs.txt" "$RS_RUNS_MAX" "$RS_RUN_LOGS_MAX_BYTES" "$CURRENT_SESSION_ID" "$RS_INCLUDE_ALL_SESSIONS" "${RS_REDACT:-0}" << 'PYRUNEVENTS' 2>/dev/null || true
+        # First pass: separate clean and bad lines
+        BAD_LINE_COUNT=$(python3 - "$RUN_EVENTS_FILE" "$RUN_EVENTS_CLEAN" "$RUN_EVENTS_BAD" << 'PYVALIDATE' 2>/dev/null
+import sys
+import json
+
+src = sys.argv[1]
+clean_dst = sys.argv[2]
+bad_dst = sys.argv[3]
+
+bad_count = 0
+clean_lines = []
+bad_lines = []
+
+try:
+    with open(src, 'r') as f:
+        for i, line in enumerate(f):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                json.loads(line)
+                clean_lines.append(line + '\n')
+            except json.JSONDecodeError:
+                bad_lines.append(f"# Line {i+1}: {line}\n")
+                bad_count += 1
+except:
+    pass
+
+# Write clean lines
+with open(clean_dst, 'w') as f:
+    f.writelines(clean_lines)
+
+# Write bad lines (only if any)
+if bad_lines:
+    with open(bad_dst, 'w') as f:
+        f.write(f"# Bad lines from run_events.jsonl ({bad_count} total)\n")
+        f.writelines(bad_lines)
+
+print(bad_count)
+PYVALIDATE
+)
+        BAD_LINE_COUNT=${BAD_LINE_COUNT:-0}
+        # Use clean file for summary generation
+        RUN_EVENTS_SOURCE="$RUN_EVENTS_CLEAN"
+    else
+        RUN_EVENTS_SOURCE=""
+    fi
+
+    # --- Generate run_summary.md AND run_logs.txt from clean run_events ---
+    # Session filtering uses CURRENT_SESSION_ID from hook payload (race-safe)
+    if [[ -f "$RUN_EVENTS_SOURCE" && -s "$RUN_EVENTS_SOURCE" ]]; then
+        python3 - "$RUN_EVENTS_SOURCE" "$TO_GPT/run_summary.md" "$TO_GPT/run_logs.txt" "$RS_RUNS_MAX" "$RS_RUN_LOGS_MAX_BYTES" "$CURRENT_SESSION_ID" "$RS_INCLUDE_ALL_SESSIONS" "${RS_REDACT:-0}" << 'PYRUNEVENTS' 2>/dev/null || true
 import sys
 import json
 import re
@@ -929,7 +1007,7 @@ else
         [[ -f "$f" ]] && TOTAL_SIZE=$((TOTAL_SIZE + $(file_size_bytes "$f")))
     done
 
-    # Build MISSING warnings section
+    # Build MISSING/WARNINGS section
     MISSING_SECTION=""
     if [[ -n "$LAST_ASSISTANT_MISSING" ]]; then
         MISSING_SECTION="${MISSING_SECTION}
@@ -938,6 +1016,10 @@ else
     if [[ -n "$RUN_SUMMARY_MISSING" ]]; then
         MISSING_SECTION="${MISSING_SECTION}
 > **MISSING: run_summary.md** - ${RUN_SUMMARY_MISSING}"
+    fi
+    if [[ "${BAD_LINE_COUNT:-0}" -gt 0 ]]; then
+        MISSING_SECTION="${MISSING_SECTION}
+> **WARNING: run_events.jsonl** - ${BAD_LINE_COUNT} corrupted line(s) isolated to run_events.bad.jsonl"
     fi
 
     cat > "$TO_GPT/packet.md" << EOF
@@ -1089,6 +1171,139 @@ fi)
 
 \`../to_claude/next_prompt.txt\`에 저장
 EOF
+
+    # --- Generate gpt_bundle.md (single-file upload for convenience) ---
+    # Combines all essential content into one file with size limit
+    RS_BUNDLE_MAX_KB="${RS_BUNDLE_MAX_KB:-80}"
+    RS_BUNDLE_DIFF_MAX_LINES="${RS_BUNDLE_DIFF_MAX_LINES:-300}"
+    BUNDLE_MAX_BYTES=$((RS_BUNDLE_MAX_KB * 1024))
+
+    python3 - "$TO_GPT" "$RS_BUNDLE_MAX_KB" "$RS_BUNDLE_DIFF_MAX_LINES" "$CYCLE_ID" "$TIMESTAMP" "$TASK_SLUG" "${BAD_LINE_COUNT:-0}" << 'PYBUNDLE' 2>/dev/null || true
+import sys
+import os
+from pathlib import Path
+
+to_gpt = Path(sys.argv[1])
+max_kb = int(sys.argv[2])
+diff_max_lines = int(sys.argv[3])
+cycle_id = sys.argv[4]
+timestamp = sys.argv[5]
+task_slug = sys.argv[6]
+bad_line_count = int(sys.argv[7])
+
+max_bytes = max_kb * 1024
+bundle_path = to_gpt / "gpt_bundle.md"
+
+def read_file(path, max_lines=None):
+    """Read file, optionally limiting lines."""
+    try:
+        p = Path(path)
+        if p.exists():
+            content = p.read_text()
+            if max_lines:
+                lines = content.splitlines()
+                if len(lines) > max_lines:
+                    content = '\n'.join(lines[:max_lines])
+                    content += f"\n\n... (truncated at {max_lines} lines, {len(lines) - max_lines} more) ..."
+            return content
+    except:
+        pass
+    return None
+
+def file_size(path):
+    try:
+        return Path(path).stat().st_size
+    except:
+        return 0
+
+sections = []
+current_size = 0
+
+# 1) Header with metadata
+header = f"""# GPT Review Bundle: {cycle_id}
+
+> Generated: {timestamp}
+> Task: {task_slug}
+> **Single-file upload**: 이 파일 하나만 업로드해도 됩니다.
+"""
+if bad_line_count > 0:
+    header += f"\n> ⚠️ WARNING: {bad_line_count} corrupted line(s) in run_events.jsonl (see run_events.bad.jsonl)\n"
+sections.append(header)
+current_size += len(header.encode('utf-8'))
+
+# 2) Last assistant message (if exists)
+assistant_msg = read_file(to_gpt / "last_assistant_message.md")
+if assistant_msg:
+    section = f"\n---\n\n## Agent Response\n\n{assistant_msg}\n"
+    if current_size + len(section.encode('utf-8')) < max_bytes:
+        sections.append(section)
+        current_size += len(section.encode('utf-8'))
+
+# 3) Run summary (required)
+run_summary = read_file(to_gpt / "run_summary.md")
+if run_summary:
+    section = f"\n---\n\n## Run Summary\n\n{run_summary}\n"
+    if current_size + len(section.encode('utf-8')) < max_bytes:
+        sections.append(section)
+        current_size += len(section.encode('utf-8'))
+
+# 4) Run logs (if failures exist)
+run_logs = read_file(to_gpt / "run_logs.txt")
+if run_logs:
+    # Truncate to ~20% of remaining space
+    remaining = max_bytes - current_size
+    max_log_bytes = min(len(run_logs.encode('utf-8')), remaining // 5)
+    if max_log_bytes > 500:
+        truncated = run_logs.encode('utf-8')[:max_log_bytes].decode('utf-8', errors='ignore')
+        if len(run_logs) > len(truncated):
+            truncated += "\n\n... (truncated) ..."
+        section = f"\n---\n\n## Failed Run Logs\n\n{truncated}\n"
+        sections.append(section)
+        current_size += len(section.encode('utf-8'))
+
+# 5) Git diff (if exists, truncated to N lines)
+git_diff = read_file(to_gpt / "git_diff.patch", max_lines=diff_max_lines)
+if git_diff and git_diff.strip():
+    section = f"\n---\n\n## Git Diff\n\n```diff\n{git_diff}\n```\n"
+    if current_size + len(section.encode('utf-8')) < max_bytes:
+        sections.append(section)
+        current_size += len(section.encode('utf-8'))
+
+# 6) Transcript tail (optional, if space remains)
+transcript_tail = read_file(to_gpt / "transcript_tail.jsonl")
+if transcript_tail:
+    remaining = max_bytes - current_size
+    if remaining > 2000:  # Only include if significant space remains
+        max_tail_bytes = min(len(transcript_tail.encode('utf-8')), remaining - 500)
+        truncated = transcript_tail.encode('utf-8')[:max_tail_bytes].decode('utf-8', errors='ignore')
+        section = f"\n---\n\n## Transcript Tail (error-focused)\n\n```jsonl\n{truncated}\n```\n"
+        sections.append(section)
+        current_size += len(section.encode('utf-8'))
+
+# Final size check and truncation warning
+content = ''.join(sections)
+if len(content.encode('utf-8')) > max_bytes:
+    content = content.encode('utf-8')[:max_bytes].decode('utf-8', errors='ignore')
+    content += f"\n\n---\n\n> ⚠️ **Bundle truncated** at {max_kb}KB limit. See individual files for full content."
+
+# Add footer
+content += f"""
+
+---
+
+## 검토 요청
+
+1. **코드 품질**: 버그, 보안 취약점, 개선점이 있는가?
+2. **설계 결정**: 현재 접근 방식의 장단점은 무엇인가?
+3. **실패 분석**: run_logs나 transcript에 문제가 보이는가?
+
+> 상세 내용이 필요하면 개별 파일(run_events.jsonl, git_diff.patch 등)을 업로드하세요.
+"""
+
+bundle_path.write_text(content)
+print(f"gpt_bundle.md: {len(content.encode('utf-8'))} bytes")
+PYBUNDLE
+
 fi
 
 # IMPORTANT: Never output decision blocks (for Stop hook safety)
