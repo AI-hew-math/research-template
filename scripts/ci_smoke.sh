@@ -160,8 +160,14 @@ get_cycle_dir() {
     printf "review_cycles/cycle_%04d" "$cycle_num"
 }
 
+# === E2E Harness Standard ===
+# All hook calls MUST use Claude payload style:
+#   {"cwd": "...", "hook_event_name": "...", "session_id": "...", ...}
+# Generate a consistent session_id for this test run
+CI_SESSION_ID="ci_test_$(date +%s)_$$"
+
 # 4a: UserPromptSubmit → creates cycle directory + user_prompt.txt
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "Test prompt 1"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "Test prompt 1"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4A=$(get_cycle_dir)
 
 if [[ -f "$CYCLE_4A/to_gpt/user_prompt.txt" ]]; then
@@ -171,7 +177,7 @@ else
 fi
 
 # 4b: Stop → last_assistant_message.md in same cycle
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Test response from agent"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "last_assistant_message": "Test response from agent"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 if [[ -f "$CYCLE_4A/to_gpt/last_assistant_message.md" ]]; then
     pass "Stop creates last_assistant_message.md"
@@ -181,7 +187,7 @@ fi
 
 # 4c: Second UserPromptSubmit → increments cycle
 PREV_CYCLE_NUM=$(cat .claude/state/current_cycle.txt 2>/dev/null || echo "0")
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "Test prompt 2"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "Test prompt 2"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4C=$(get_cycle_dir)
 NEW_CYCLE_NUM=$(cat .claude/state/current_cycle.txt 2>/dev/null || echo "0")
 
@@ -204,7 +210,7 @@ Line 2 with "quotes"
 Line 3 with $special chars
 Line 4'
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "'"$(echo "$MULTILINE_PROMPT" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read())[1:-1])')"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "'"$(echo "$MULTILINE_PROMPT" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read())[1:-1])')"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4E=$(get_cycle_dir)
 
 SAVED_PROMPT=$(cat "$CYCLE_4E/to_gpt/user_prompt.txt" 2>/dev/null || echo "")
@@ -225,7 +231,7 @@ def hello():
 
 End of response.'
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "'"$(echo "$MULTILINE_RESPONSE" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read())[1:-1])')"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "last_assistant_message": "'"$(echo "$MULTILINE_RESPONSE" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read())[1:-1])')"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 SAVED_RESPONSE=$(cat "$CYCLE_4E/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
 if [[ "$SAVED_RESPONSE" == "$MULTILINE_RESPONSE" ]]; then
@@ -235,11 +241,11 @@ else
 fi
 
 # 4g: stop_hook_active handling test (relaxed policy)
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "stop_hook test prompt"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "stop_hook test prompt"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4G=$(get_cycle_dir)
 
 STOP_HOOK_MSG="stop_hook_active response"
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "stop_hook_active": true, "last_assistant_message": "'"$STOP_HOOK_MSG"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "stop_hook_active": true, "last_assistant_message": "'"$STOP_HOOK_MSG"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 SAVED_STOP_MSG=$(cat "$CYCLE_4G/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
 if [[ "$SAVED_STOP_MSG" == "$STOP_HOOK_MSG" ]]; then
@@ -267,9 +273,9 @@ cat > "$MOCK_TRANSCRIPT" << 'MOCKEOF'
 {"type": "message", "content": "Success after retry"}
 MOCKEOF
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "transcript test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "transcript test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4H=$(get_cycle_dir)
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "transcript_path": "'"$MOCK_TRANSCRIPT"'", "last_assistant_message": "Done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "transcript_path": "'"$MOCK_TRANSCRIPT"'", "last_assistant_message": "Done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 if [[ -f "$CYCLE_4H/to_gpt/claude_transcript.jsonl" ]]; then
     pass "transcript_path copies full transcript"
@@ -327,15 +333,15 @@ echo "Traceback (most recent call last):" >> "$FAKE_FAIL_RUN/stderr.log"
 echo "  File 'test.py', line 1" >> "$FAKE_FAIL_RUN/stderr.log"
 echo "stdout content for ci test" > "$FAKE_FAIL_RUN/stdout.log"
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_logs failed test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "run_logs failed test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4I=$(get_cycle_dir)
 
 mkdir -p "$CYCLE_4I/to_gpt"
 cat > "$CYCLE_4I/to_gpt/run_events.jsonl" << RUNEVENTS
-{"ts": $(date +%s), "run_id": "ci_fake_fail_run", "exp": "ci_fail", "cmd": "fake", "run_dir": "$FAKE_FAIL_RUN", "exit_code": 42, "duration": 1, "stdout_path": "$FAKE_FAIL_RUN/stdout.log", "stderr_path": "$FAKE_FAIL_RUN/stderr.log"}
+{"ts": $(date +%s), "run_id": "ci_fake_fail_run", "exp": "ci_fail", "cmd": "fake", "run_dir": "$FAKE_FAIL_RUN", "exit_code": 42, "duration": 1, "stdout_path": "$FAKE_FAIL_RUN/stdout.log", "stderr_path": "$FAKE_FAIL_RUN/stderr.log", "session_id": "$CI_SESSION_ID"}
 RUNEVENTS
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Checking logs"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "last_assistant_message": "Checking logs"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 if [[ -f "$CYCLE_4I/to_gpt/run_logs.txt" ]]; then
     pass "run_logs.txt created for failed latest run"
@@ -372,15 +378,15 @@ RUNCARD
 
 echo "SUCCESS output" > "$FAKE_SUCCESS_RUN/stdout.log"
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_logs success test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "run_logs success test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4I2=$(get_cycle_dir)
 
 mkdir -p "$CYCLE_4I2/to_gpt"
 cat > "$CYCLE_4I2/to_gpt/run_events.jsonl" << RUNEVENTS
-{"ts": $(date +%s), "run_id": "ci_fake_success_run", "exp": "ci_success", "cmd": "fake", "run_dir": "$FAKE_SUCCESS_RUN", "exit_code": 0, "duration": 1, "stdout_path": "$FAKE_SUCCESS_RUN/stdout.log", "stderr_path": "$FAKE_SUCCESS_RUN/stderr.log"}
+{"ts": $(date +%s), "run_id": "ci_fake_success_run", "exp": "ci_success", "cmd": "fake", "run_dir": "$FAKE_SUCCESS_RUN", "exit_code": 0, "duration": 1, "stdout_path": "$FAKE_SUCCESS_RUN/stdout.log", "stderr_path": "$FAKE_SUCCESS_RUN/stderr.log", "session_id": "$CI_SESSION_ID"}
 RUNEVENTS
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Success check"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "last_assistant_message": "Success check"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 if [[ ! -f "$CYCLE_4I2/to_gpt/run_logs.txt" ]]; then
     pass "run_logs.txt NOT created for success run (correct)"
@@ -423,10 +429,10 @@ cat > "$MOCK_TRANSCRIPT_RECOVERY" << 'MOCKJSONL'
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"FINAL_ASSISTANT_TEXT_FROM_NESTED_TRANSCRIPT"}]}}
 MOCKJSONL
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "transcript recovery test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "transcript recovery test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4L=$(get_cycle_dir)
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "transcript_path": "'"$MOCK_TRANSCRIPT_RECOVERY"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "transcript_path": "'"$MOCK_TRANSCRIPT_RECOVERY"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 if [[ -f "$CYCLE_4L/to_gpt/last_assistant_message.md" ]]; then
     RECOVERED_MSG=$(cat "$CYCLE_4L/to_gpt/last_assistant_message.md" 2>/dev/null || echo "")
@@ -454,9 +460,9 @@ cat > "$MOCK_TRANSCRIPT_EMPTY" << 'MOCKJSONL'
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"test","name":"Bash","input":{}}]}}
 MOCKJSONL
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "empty transcript test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "empty transcript test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4L2=$(get_cycle_dir)
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "transcript_path": "'"$MOCK_TRANSCRIPT_EMPTY"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "transcript_path": "'"$MOCK_TRANSCRIPT_EMPTY"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 if [[ ! -f "$CYCLE_4L2/to_gpt/last_assistant_message.md" ]]; then
     pass "0-byte last_assistant_message.md is deleted"
@@ -499,15 +505,15 @@ INFO: GPU memory usage 50%
 DEBUG: batch processing complete
 STDERR
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "run_summary test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "run_summary test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4M=$(get_cycle_dir)
 
 mkdir -p "$CYCLE_4M/to_gpt"
 cat > "$CYCLE_4M/to_gpt/run_events.jsonl" << RUNEVENTS
-{"ts": $(date +%s), "run_id": "ci_summary_test_run", "exp": "summary_test", "cmd": "fake training", "run_dir": "$FAKE_SUMMARY_RUN", "exit_code": 0, "duration": 5, "stdout_path": "$FAKE_SUMMARY_RUN/stdout.log", "stderr_path": "$FAKE_SUMMARY_RUN/stderr.log"}
+{"ts": $(date +%s), "run_id": "ci_summary_test_run", "exp": "summary_test", "cmd": "fake training", "run_dir": "$FAKE_SUMMARY_RUN", "exit_code": 0, "duration": 5, "stdout_path": "$FAKE_SUMMARY_RUN/stdout.log", "stderr_path": "$FAKE_SUMMARY_RUN/stderr.log", "session_id": "$CI_SESSION_ID"}
 RUNEVENTS
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Checking run summary"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "last_assistant_message": "Checking run summary"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 RUN_SUMMARY_FILE="$CYCLE_4M/to_gpt/run_summary.md"
 
@@ -555,7 +561,7 @@ rm -rf "$FAKE_SUMMARY_RUN"
 
 # 4n: Multi-run cycle test (run_events.jsonl based with 3 runs)
 # Test: execute 3 runs in same cycle (2 success + 1 fail), verify all runs captured
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "multi-run cycle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "multi-run cycle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4N=$(get_cycle_dir)
 
 # Run 1: Success
@@ -568,7 +574,7 @@ CYCLE_4N=$(get_cycle_dir)
 ./scripts/run.sh --exp multi_success2 echo "Multi run success 2" > /dev/null 2>&1
 
 # Trigger Stop
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Multi-run test done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "last_assistant_message": "Multi-run test done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 MULTI_RUN_EVENTS="$CYCLE_4N/to_gpt/run_events.jsonl"
 if [[ -f "$MULTI_RUN_EVENTS" ]]; then
@@ -642,7 +648,7 @@ rm -rf "$PROJECT_DIR/runs/"*multi_*
 
 # 4o: Fallback test - run_summary without run_events.jsonl
 # Test that run_card.md scan works as fallback when hooks weren't approved
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "fallback test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "fallback test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4O=$(get_cycle_dir)
 
 # Create a fake run WITHOUT using run.sh (simulates hooks not approved)
@@ -661,7 +667,7 @@ touch "$FAKE_FALLBACK_RUN/run_card.md"  # Ensure recent mtime
 
 # Do NOT create run_events.jsonl - this triggers fallback
 # Trigger Stop
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "Fallback test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "last_assistant_message": "Fallback test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 if [[ -f "$CYCLE_4O/to_gpt/run_summary.md" ]]; then
     if grep -q "fallback\|ci_fallback_test_run" "$CYCLE_4O/to_gpt/run_summary.md"; then
@@ -678,7 +684,7 @@ rm -rf "$FAKE_FALLBACK_RUN"
 # 4p: Long cycle false positive prevention
 # Test that stale detection uses last_activity_ts (not start_ts)
 # A cycle with old start_ts but recent last_activity_ts should NOT be marked stale
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "long cycle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "long cycle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4P=$(get_cycle_dir)
 
 # Manipulate timestamps: start_ts is 2 hours ago, but last_activity_ts is NOW
@@ -705,7 +711,7 @@ else
 fi
 
 # Test the opposite: truly stale cycle (both start_ts AND last_activity_ts are old)
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "stale cycle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "stale cycle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4P_STALE=$(get_cycle_dir)
 
 # Both timestamps old = truly stale
@@ -731,7 +737,7 @@ rm -f "$UNATTRIBUTED_EVENTS"
 
 # 4q: Snapshot-based cycle assignment (run exceeds stale threshold during execution)
 # The cycle should be determined at RUN START, not at append time
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "snapshot test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "snapshot test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4Q=$(get_cycle_dir)
 
 # Use very short stale threshold (1 second) and sleep during run
@@ -753,8 +759,8 @@ rm -rf "$PROJECT_DIR/runs/"*snapshot_test*
 rm -f "$PROJECT_DIR/review_cycles/unattributed_run_events.jsonl"
 
 # 4r: Session ID tracking and filtering
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "SessionStart"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "session test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "SessionStart", "session_id": "'"$CI_SESSION_ID"'"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "session test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4R=$(get_cycle_dir)
 
 # Verify session_id was created (now uses latest_session_id instead of global file)
@@ -781,7 +787,7 @@ fi
 rm -rf "$PROJECT_DIR/runs/"*session_test*
 
 # 4s: Sensitive info redaction (RS_REDACT=1)
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "redact test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "redact test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4S=$(get_cycle_dir)
 
 # Run with sensitive-looking command (simulated API key)
@@ -805,7 +811,7 @@ fi
 rm -rf "$PROJECT_DIR/runs/"*redact_test*
 
 # 4t: env.txt default OFF (security)
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "env test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "env test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 # Run WITHOUT RS_SAVE_ENV - env.txt should NOT be created
 ./scripts/run.sh --exp env_off_test echo "testing env off" > /dev/null 2>&1
@@ -832,7 +838,7 @@ fi
 rm -rf "$PROJECT_DIR/runs/"*env_*_test*
 
 # 4u: run_events.jsonl integrity (clean/bad separation)
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "integrity test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "integrity test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4U=$(get_cycle_dir)
 
 # Create a run_events.jsonl with some valid and some invalid lines
@@ -844,7 +850,7 @@ echo "this is not valid json {broken" >> "$INTEGRITY_EVENTS"
 echo '{"valid": "json", "but": "no run_id"}' >> "$INTEGRITY_EVENTS"
 
 # Trigger Stop to process integrity
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "integrity test done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "last_assistant_message": "integrity test done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 # Check clean file exists and has valid content
 if [[ -f "$CYCLE_4U/to_gpt/run_events.clean.jsonl" ]]; then
@@ -878,13 +884,13 @@ fi
 rm -rf "$PROJECT_DIR/runs/"*integrity_test*
 
 # 4v: gpt_bundle.md generation
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "prompt": "bundle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "bundle test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4V=$(get_cycle_dir)
 
 ./scripts/run.sh --exp bundle_success echo "bundle success" > /dev/null 2>&1
 ./scripts/run.sh --exp bundle_fail bash -c "echo 'error output' >&2; exit 1" 2>/dev/null || true
 
-echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "last_assistant_message": "bundle test response with content"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "last_assistant_message": "bundle test response with content"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 
 BUNDLE_FILE="$CYCLE_4V/to_gpt/gpt_bundle.md"
 if [[ -f "$BUNDLE_FILE" ]]; then
@@ -914,6 +920,54 @@ else
     fail "gpt_bundle.md not created"
 fi
 rm -rf "$PROJECT_DIR/runs/"*bundle_*
+
+# 4w: DETERMINISTIC line count test (N runs = N lines in run_events.clean.jsonl)
+# Critical: Verifies no duplicate appends (start+end, concurrent writes, etc.)
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "deterministic line count test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4W=$(get_cycle_dir)
+
+# Run exactly 2 runs: 1 success + 1 failure
+./scripts/run.sh --exp line_count_success echo "line count success" > /dev/null 2>&1
+./scripts/run.sh --exp line_count_fail bash -c "exit 1" 2>/dev/null || true
+
+# Trigger Stop
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "last_assistant_message": "line count test done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+# Verify run_events.clean.jsonl has exactly 2 lines
+CLEAN_JSONL="$CYCLE_4W/to_gpt/run_events.clean.jsonl"
+if [[ -f "$CLEAN_JSONL" ]]; then
+    LINE_COUNT=$(wc -l < "$CLEAN_JSONL" | tr -d ' ')
+    if [[ "$LINE_COUNT" -eq 2 ]]; then
+        pass "DETERMINISTIC: 2 runs = 2 lines in run_events.clean.jsonl"
+    else
+        fail "DETERMINISTIC FAIL: expected 2 lines, got $LINE_COUNT (duplicate append bug?)"
+        # Debug output
+        echo "  [DEBUG] Contents of $CLEAN_JSONL:"
+        cat "$CLEAN_JSONL" | head -10 | sed 's/^/    /'
+    fi
+else
+    # Fallback to original run_events.jsonl
+    ORIG_JSONL="$CYCLE_4W/to_gpt/run_events.jsonl"
+    if [[ -f "$ORIG_JSONL" ]]; then
+        LINE_COUNT=$(wc -l < "$ORIG_JSONL" | tr -d ' ')
+        if [[ "$LINE_COUNT" -eq 2 ]]; then
+            pass "DETERMINISTIC: 2 runs = 2 lines in run_events.jsonl"
+        else
+            fail "DETERMINISTIC FAIL: expected 2 lines, got $LINE_COUNT"
+        fi
+    else
+        fail "DETERMINISTIC: run_events.jsonl not created"
+    fi
+fi
+
+# Verify both experiments are captured
+if grep -q "line_count_success" "$CLEAN_JSONL" 2>/dev/null && grep -q "line_count_fail" "$CLEAN_JSONL" 2>/dev/null; then
+    pass "DETERMINISTIC: both experiments captured"
+else
+    fail "DETERMINISTIC: missing experiment entries"
+fi
+
+rm -rf "$PROJECT_DIR/runs/"*line_count_*
 
 # --- Test 5: git_snap.sh ---
 info "Test 5: git_snap.sh"
