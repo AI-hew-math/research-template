@@ -665,13 +665,30 @@ if current_session_id and not include_all_sessions:
     runs = [r for r in all_runs if r.get('session_id', '') == current_session_id or not r.get('session_id')]
     other_session_runs = [r for r in all_runs if r.get('session_id', '') != current_session_id and r.get('session_id')]
 
-# Limit to most recent RS_RUNS_MAX runs (by ts)
-runs.sort(key=lambda r: r.get('ts', 0), reverse=True)
-runs = runs[:max_runs]
-runs.reverse()  # Chronological order for display
+# === Failure-first selection policy ===
+# 1. All FAILED runs are always included (up to max_runs)
+# 2. Remaining slots filled by most recent SUCCESS runs
+# This ensures critical failures are never dropped from summary
+failed_runs_all = [r for r in runs if r.get('exit_code', 0) != 0]
+success_runs_all = [r for r in runs if r.get('exit_code', 0) == 0]
 
-# Separate failed runs
-failed_runs = [r for r in runs if r.get('exit_code', 0) != 0]
+# Sort by timestamp (most recent first)
+failed_runs_all.sort(key=lambda r: r.get('ts', 0), reverse=True)
+success_runs_all.sort(key=lambda r: r.get('ts', 0), reverse=True)
+
+# Select: all failed (up to max), then fill with success
+selected_failed = failed_runs_all[:max_runs]
+remaining_slots = max_runs - len(selected_failed)
+selected_success = success_runs_all[:remaining_slots] if remaining_slots > 0 else []
+
+# Combine and sort chronologically for display
+runs = selected_failed + selected_success
+runs.sort(key=lambda r: r.get('ts', 0))
+
+# Track what was included
+failed_runs = selected_failed
+total_runs_available = len(failed_runs_all) + len(success_runs_all)
+omitted_count = total_runs_available - len(runs)
 
 # ========== Generate run_summary.md ==========
 lines = []
@@ -681,7 +698,10 @@ if current_session_id and not include_all_sessions:
     lines.append(f"Session: `{current_session_id}`")
     if other_session_runs:
         lines.append(f"(+{len(other_session_runs)} runs from other sessions, use RS_INCLUDE_ALL_SESSIONS=1 to include)")
-lines.append(f"Total runs this cycle: {len(runs)}")
+if omitted_count > 0:
+    lines.append(f"Total runs this cycle: {len(runs)} (showing {len(runs)}/{total_runs_available}, failures prioritized)")
+else:
+    lines.append(f"Total runs this cycle: {len(runs)}")
 if failed_runs:
     lines.append(f"**Failed runs: {len(failed_runs)}**")
 lines.append("")

@@ -969,6 +969,125 @@ fi
 
 rm -rf "$PROJECT_DIR/runs/"*line_count_*
 
+# 4x: Failure-first summary policy (RS_RUNS_MAX limits, failures always included)
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "failure-first policy test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4X=$(get_cycle_dir)
+
+# Run 3 successes + 1 failure (total 4 runs)
+./scripts/run.sh --exp ff_success1 echo "success 1" > /dev/null 2>&1
+./scripts/run.sh --exp ff_success2 echo "success 2" > /dev/null 2>&1
+./scripts/run.sh --exp ff_success3 echo "success 3" > /dev/null 2>&1
+./scripts/run.sh --exp ff_fail bash -c "exit 1" 2>/dev/null || true
+
+# Trigger Stop with RS_RUNS_MAX=2 (only 2 runs should be in summary)
+export RS_RUNS_MAX=2
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "last_assistant_message": "failure-first test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+unset RS_RUNS_MAX
+
+FF_SUMMARY="$CYCLE_4X/to_gpt/run_summary.md"
+if [[ -f "$FF_SUMMARY" ]]; then
+    # Failure must be included
+    if grep -q "ff_fail" "$FF_SUMMARY"; then
+        pass "Failure-first: FAILED run included despite RS_RUNS_MAX=2"
+    else
+        fail "Failure-first: FAILED run should always be included"
+    fi
+
+    # Only 1 success should be included (out of 3 available)
+    # Count unique success runs in the table (format: | N | `run_id...` | ff_successX |)
+    SUCCESS_TABLE_COUNT=$(grep -E "\| ff_success[0-9] \|" "$FF_SUMMARY" | wc -l | tr -d ' ')
+    if [[ "$SUCCESS_TABLE_COUNT" -eq 1 ]]; then
+        pass "Failure-first: exactly 1 success run in limited summary (1/3 selected)"
+    else
+        fail "Failure-first: expected 1 success in table, got $SUCCESS_TABLE_COUNT"
+    fi
+
+    # Verify "failures prioritized" note appears when runs are limited
+    if grep -q "failures prioritized" "$FF_SUMMARY"; then
+        pass "Failure-first: summary shows 'failures prioritized' note"
+    else
+        fail "Failure-first: should show 'failures prioritized' in limited summary"
+    fi
+
+    # Verify exactly 2 runs in table (1 fail + 1 success)
+    TABLE_ROW_COUNT=$(grep -c "^| [0-9]" "$FF_SUMMARY" 2>/dev/null || echo "0")
+    if [[ "$TABLE_ROW_COUNT" -eq 2 ]]; then
+        pass "Failure-first: exactly 2 runs in table (RS_RUNS_MAX=2 honored)"
+    else
+        fail "Failure-first: expected 2 table rows, got $TABLE_ROW_COUNT"
+    fi
+else
+    fail "Failure-first: run_summary.md not created"
+fi
+rm -rf "$PROJECT_DIR/runs/"*ff_*
+
+# 4y: Parallel run.sh concurrency integrity test
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "parallel concurrency test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+CYCLE_4Y=$(get_cycle_dir)
+
+# Run 2 experiments in parallel (background)
+./scripts/run.sh --exp parallel_a echo "parallel A" > /dev/null 2>&1 &
+PID_A=$!
+./scripts/run.sh --exp parallel_b echo "parallel B" > /dev/null 2>&1 &
+PID_B=$!
+
+# Wait for both to complete
+wait $PID_A $PID_B
+
+# Trigger Stop
+echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$CI_SESSION_ID"'", "last_assistant_message": "parallel test done"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
+
+PARALLEL_CLEAN="$CYCLE_4Y/to_gpt/run_events.clean.jsonl"
+if [[ -f "$PARALLEL_CLEAN" ]]; then
+    PARALLEL_LINES=$(wc -l < "$PARALLEL_CLEAN" | tr -d ' ')
+    if [[ "$PARALLEL_LINES" -eq 2 ]]; then
+        pass "Parallel: exactly 2 lines in run_events.clean.jsonl"
+    else
+        fail "Parallel: expected 2 lines, got $PARALLEL_LINES"
+    fi
+
+    # (a) Verify 2 different run_ids
+    RUN_ID_COUNT=$(grep -o '"run_id": "[^"]*"' "$PARALLEL_CLEAN" | sort -u | wc -l | tr -d ' ')
+    if [[ "$RUN_ID_COUNT" -eq 2 ]]; then
+        pass "Parallel: 2 unique run_ids"
+    else
+        fail "Parallel: expected 2 unique run_ids, got $RUN_ID_COUNT"
+    fi
+
+    # (b) Verify each exp appears exactly once
+    EXP_A_COUNT=$(grep -c '"exp": "parallel_a"' "$PARALLEL_CLEAN" 2>/dev/null || echo "0")
+    EXP_B_COUNT=$(grep -c '"exp": "parallel_b"' "$PARALLEL_CLEAN" 2>/dev/null || echo "0")
+    if [[ "$EXP_A_COUNT" -eq 1 ]] && [[ "$EXP_B_COUNT" -eq 1 ]]; then
+        pass "Parallel: each exp appears exactly once"
+    else
+        fail "Parallel: exp counts wrong (parallel_a=$EXP_A_COUNT, parallel_b=$EXP_B_COUNT)"
+    fi
+
+    # (c) Verify stdout_path/stderr_path match runs/<run_id>/...
+    PATH_VALID=true
+    while IFS= read -r line; do
+        run_id=$(echo "$line" | grep -o '"run_id": "[^"]*"' | cut -d'"' -f4)
+        stdout_path=$(echo "$line" | grep -o '"stdout_path": "[^"]*"' | cut -d'"' -f4)
+        stderr_path=$(echo "$line" | grep -o '"stderr_path": "[^"]*"' | cut -d'"' -f4)
+
+        if [[ ! "$stdout_path" =~ runs/$run_id/stdout.log ]]; then
+            PATH_VALID=false
+        fi
+        if [[ ! "$stderr_path" =~ runs/$run_id/stderr.log ]]; then
+            PATH_VALID=false
+        fi
+    done < "$PARALLEL_CLEAN"
+
+    if [[ "$PATH_VALID" == "true" ]]; then
+        pass "Parallel: stdout/stderr paths match run_id"
+    else
+        fail "Parallel: path mismatch (should be runs/<run_id>/...)"
+    fi
+else
+    fail "Parallel: run_events.clean.jsonl not created"
+fi
+rm -rf "$PROJECT_DIR/runs/"*parallel_*
+
 # --- Test 5: git_snap.sh ---
 info "Test 5: git_snap.sh"
 
