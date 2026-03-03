@@ -673,17 +673,22 @@ failed_runs_all = [r for r in runs if r.get('exit_code', 0) != 0]
 success_runs_all = [r for r in runs if r.get('exit_code', 0) == 0]
 
 # Sort by timestamp (most recent first)
-failed_runs_all.sort(key=lambda r: r.get('ts', 0), reverse=True)
-success_runs_all.sort(key=lambda r: r.get('ts', 0), reverse=True)
+# Use (ts_ns, ts) as key for deterministic ordering (ts_ns breaks ties within same second)
+# Backward compatible: ts_ns defaults to 0 for legacy entries without it
+def sort_key(r):
+    return (r.get('ts_ns', 0), r.get('ts', 0))
+
+failed_runs_all.sort(key=sort_key, reverse=True)
+success_runs_all.sort(key=sort_key, reverse=True)
 
 # Select: all failed (up to max), then fill with success
 selected_failed = failed_runs_all[:max_runs]
 remaining_slots = max_runs - len(selected_failed)
 selected_success = success_runs_all[:remaining_slots] if remaining_slots > 0 else []
 
-# Combine and sort chronologically for display
+# Combine and sort chronologically for display (ascending by ts_ns/ts)
 runs = selected_failed + selected_success
-runs.sort(key=lambda r: r.get('ts', 0))
+runs.sort(key=sort_key)
 
 # Track what was included
 failed_runs = selected_failed

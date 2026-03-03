@@ -320,6 +320,7 @@ def redact_sensitive(text):
 
 entry = {
     "ts": int(time.time()),
+    "ts_ns": time.time_ns(),  # Nanosecond precision for deterministic tie-breaking
     "run_id": run_id,
     "exp": exp,
     "cmd": redact_sensitive(cmd),

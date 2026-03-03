@@ -970,13 +970,18 @@ fi
 rm -rf "$PROJECT_DIR/runs/"*line_count_*
 
 # 4x: Failure-first summary policy (RS_RUNS_MAX limits, failures always included)
+# With ts_ns for deterministic "most recent success" selection
 echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "UserPromptSubmit", "session_id": "'"$CI_SESSION_ID"'", "prompt": "failure-first policy test"}' | ./.claude/hooks/cycle_export.sh > /dev/null 2>&1
 CYCLE_4X=$(get_cycle_dir)
 
 # Run 3 successes + 1 failure (total 4 runs)
+# Sleep between runs to ensure distinct ts_ns timestamps (deterministic ordering)
 ./scripts/run.sh --exp ff_success1 echo "success 1" > /dev/null 2>&1
+python3 -c "import time; time.sleep(0.02)"  # 20ms sleep for distinct ts_ns
 ./scripts/run.sh --exp ff_success2 echo "success 2" > /dev/null 2>&1
+python3 -c "import time; time.sleep(0.02)"  # 20ms sleep for distinct ts_ns
 ./scripts/run.sh --exp ff_success3 echo "success 3" > /dev/null 2>&1
+python3 -c "import time; time.sleep(0.02)"  # 20ms sleep for distinct ts_ns
 ./scripts/run.sh --exp ff_fail bash -c "exit 1" 2>/dev/null || true
 
 # Trigger Stop with RS_RUNS_MAX=2 (only 2 runs should be in summary)
@@ -985,6 +990,8 @@ echo '{"cwd": "'"$PROJECT_DIR"'", "hook_event_name": "Stop", "session_id": "'"$C
 unset RS_RUNS_MAX
 
 FF_SUMMARY="$CYCLE_4X/to_gpt/run_summary.md"
+FF_BUNDLE="$CYCLE_4X/to_gpt/gpt_bundle.md"
+
 if [[ -f "$FF_SUMMARY" ]]; then
     # Failure must be included
     if grep -q "ff_fail" "$FF_SUMMARY"; then
@@ -1000,6 +1007,13 @@ if [[ -f "$FF_SUMMARY" ]]; then
         pass "Failure-first: exactly 1 success run in limited summary (1/3 selected)"
     else
         fail "Failure-first: expected 1 success in table, got $SUCCESS_TABLE_COUNT"
+    fi
+
+    # Verify the selected success is ff_success3 (most recent due to ts_ns)
+    if grep -E "\| ff_success3 \|" "$FF_SUMMARY" > /dev/null; then
+        pass "Failure-first: most recent success (ff_success3) selected deterministically"
+    else
+        fail "Failure-first: ff_success3 should be selected (most recent by ts_ns)"
     fi
 
     # Verify "failures prioritized" note appears when runs are limited
@@ -1019,6 +1033,18 @@ if [[ -f "$FF_SUMMARY" ]]; then
 else
     fail "Failure-first: run_summary.md not created"
 fi
+
+# Verify gpt_bundle.md also contains the same selection
+if [[ -f "$FF_BUNDLE" ]]; then
+    if grep -q "ff_fail" "$FF_BUNDLE" && grep -q "ff_success3" "$FF_BUNDLE"; then
+        pass "Failure-first: gpt_bundle.md contains ff_fail + ff_success3"
+    else
+        fail "Failure-first: gpt_bundle.md should contain ff_fail + ff_success3"
+    fi
+else
+    fail "Failure-first: gpt_bundle.md not created"
+fi
+
 rm -rf "$PROJECT_DIR/runs/"*ff_*
 
 # 4y: Parallel run.sh concurrency integrity test
