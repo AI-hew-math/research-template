@@ -382,6 +382,14 @@ run_id,exp_name,exit_code,seconds,timestamp,host,git_sha
 
 ---
 
+## Simulation
+
+이 프로젝트는 시뮬레이션 기반 실험을 지원합니다.
+`scripts/run.sh`를 통해 시뮬레이션을 실행하고, 결과는 `runs/`에 자동 기록됩니다.
+파라미터 스윕과 재현 가능한 실험 환경 설정을 위한 템플릿을 제공합니다.
+
+---
+
 ## 요약
 
 | 원칙 | 설명 |

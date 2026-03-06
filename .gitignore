@@ -3,3 +3,6 @@
 .claude/.last_review_ts
 .claude/state/
 .claude/review_packets/
+.ai/packets/
+!.ai/transcripts/
+!.ai/transcripts/**
