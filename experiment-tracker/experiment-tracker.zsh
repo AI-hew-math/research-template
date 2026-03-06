@@ -7,16 +7,19 @@
 # 기능:
 #   - 탭/윈도우 타이틀에 프로젝트 폴더명 표시
 #   - cd로 이동해도 프로젝트 루트명 유지
+#   - Claude Code가 타이틀 덮어쓰기 방지
 #
 # 프로젝트 루트 감지 우선순위:
 #   (1) git repo: git rev-parse --show-toplevel
-#   (2) 상위에 .claude/ 또는 CLAUDE.md 있는 디렉토리
-#   (3) 현재 디렉토리 basename
+#   (2) 현재 디렉토리 basename
 #
 # 환경변수:
+#   CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1  (자동 export)
 #   RS_TITLE_DISABLE=1    타이틀 설정 비활성화
 #   RS_TITLE_PREFIX="X"   타이틀 앞에 prefix 추가 (예: "X: ProjectName")
 # ─────────────────────────────────────────────────────────────
+
+export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
 
 # ── 프로젝트 루트 탐지 ──
 _rs_find_project_root() {
@@ -28,18 +31,7 @@ _rs_find_project_root() {
     return 0
   fi
 
-  # (2) 상위로 올라가며 .claude/ 또는 CLAUDE.md 탐색
-  local dir
-  dir=$(pwd -P)
-  while [[ "$dir" != "/" ]]; do
-    if [[ -d "$dir/.claude" ]] || [[ -f "$dir/CLAUDE.md" ]]; then
-      echo "$dir"
-      return 0
-    fi
-    dir="${dir:h}"
-  done
-
-  # (3) fallback: 현재 디렉토리 (실경로)
+  # (2) fallback: 현재 디렉토리 (실경로)
   pwd -P
 }
 
@@ -65,6 +57,9 @@ _rs_find_tty() {
 _rs_set_title() {
   # 비활성화 옵션
   [[ "${RS_TITLE_DISABLE:-}" == "1" ]] && return 0
+  # 재진입 방지 (chpwd → _rs_find_project_root 내부 cd → chpwd 무한 재귀 차단)
+  [[ "${_RS_IN_TITLE:-}" == "1" ]] && return 0
+  _RS_IN_TITLE=1
 
   local project_root project_name title
   project_root=$(_rs_find_project_root)
@@ -85,20 +80,20 @@ _rs_set_title() {
   else
     print -Pn "\e]0;${title}\a"
   fi
-}
-
-# ── zsh hooks ──
-_rs_chpwd() {
-  _rs_set_title
-}
-
-_rs_precmd() {
-  _rs_set_title
+  _RS_IN_TITLE=0
 }
 
 autoload -Uz add-zsh-hook
-add-zsh-hook chpwd _rs_chpwd
-add-zsh-hook precmd _rs_precmd
+add-zsh-hook chpwd _rs_set_title
+add-zsh-hook precmd _rs_set_title
+
+# claude wrapper: 타이틀 덮어쓰기 방지
+unalias claude 2>/dev/null
+function claude {
+  _rs_set_title
+  CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 command claude "$@"
+  _rs_set_title
+}
 
 # 초기 타이틀 설정
 _rs_set_title
