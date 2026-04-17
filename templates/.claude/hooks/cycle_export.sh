@@ -1,5 +1,5 @@
 #!/bin/bash
-# cycle_export.sh - GPT 검토 사이클용 파일 자동 export
+# cycle_export.sh - 레거시 review_cycles export hook
 #
 # Agent hooks에서 호출됨:
 #   - UserPromptSubmit: cycle +1, user_prompt.txt 저장
@@ -34,6 +34,10 @@
 #   RS_TRANSCRIPT_TAIL_LINES=400     # transcript_tail 기본 라인 수
 #   RS_RUN_LOG_MAX_BYTES=51200       # run_logs.txt 최대 크기 (50KB)
 #   RS_HOOK_DEBUG=1                  # Stop hook 입력 JSON 저장
+#
+# Status:
+#   - compatibility-only hook bundle
+#   - canonical v2 review records should live under reviews/cycles/CYCLE-####/
 
 set -e
 

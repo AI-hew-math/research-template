@@ -1,51 +1,7 @@
-# Lessons Learned
+# Deprecated Compatibility Asset
 
-> 프로젝트들에서 배운 교훈 모음
-> 같은 실수를 반복하지 않기 위해 기록
+This legacy shared-knowledge template path is no longer the v2 source of truth.
 
----
+Use:
 
-## 사용법
-
-Agent는 새 실험 전에 이 파일을 확인하여 과거 실수를 방지합니다.
-
-### 기록 형식
-```
-## [카테고리]
-
-### YYYY-MM-DD: [제목]
-- **프로젝트**: ProjectName
-- **상황**: 무엇을 하려 했는지
-- **문제**: 무엇이 잘못됐는지
-- **해결/교훈**: 어떻게 해결했는지, 앞으로 뭘 해야 하는지
-```
-
----
-
-## 실험 설정
-
-<!-- 하이퍼파라미터, 설정 관련 교훈 -->
-
----
-
-## 서버/환경
-
-<!-- 서버 사용, 환경 설정 관련 교훈 -->
-
----
-
-## 코드/구현
-
-<!-- 코드 작성, 버그 관련 교훈 -->
-
----
-
-## 방법론
-
-<!-- 연구 방법론 관련 교훈 -->
-
----
-
-## 논문/아이디어
-
-<!-- 아이디어 검증, 논문 관련 교훈 -->
+- `templates/shared/knowledge/lessons_learned.md`

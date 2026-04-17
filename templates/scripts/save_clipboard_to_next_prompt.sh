@@ -1,11 +1,15 @@
 #!/bin/bash
-# save_clipboard_to_next_prompt.sh - 클립보드 내용을 최신 cycle의 next_prompt.txt에 저장
+# save_clipboard_to_next_prompt.sh - 레거시 review_cycles import helper
 #
 # Usage:
 #   ./scripts/save_clipboard_to_next_prompt.sh          # pbpaste 사용 (macOS)
 #   echo "content" | ./scripts/save_clipboard_to_next_prompt.sh --stdin  # stdin 사용
 #
 # 출력: review_cycles/cycle_XXXX/to_claude/next_prompt.txt
+#
+# Status:
+#   - compatibility-only helper
+#   - canonical v2 next-prompt docs live under reviews/cycles/CYCLE-####/
 
 set -e
 
@@ -56,6 +60,8 @@ if [[ -z "$CONTENT" ]]; then
     echo "Error: 클립보드가 비어있습니다." >&2
     exit 1
 fi
+
+echo "[deprecated] save_clipboard_to_next_prompt.sh is a compatibility helper; canonical v2 review docs live under reviews/cycles/CYCLE-####/" >&2
 
 # --- Save to to_claude/next_prompt.txt ---
 TO_CLAUDE_DIR="$LATEST_CYCLE/to_claude"

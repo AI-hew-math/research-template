@@ -3,7 +3,7 @@
 # Usage: ./scripts/ci_smoke.sh
 #
 # Tests (non-interactive, no agent CLI required):
-# 1. create_project.sh → project structure
+# 1. v2 create_project.sh profiles + canonical/legacy boundary
 # 2. run.sh success/fail
 # 3. draft_memo.py
 # 4. cycle_export.sh (UserPromptSubmit/Stop, multiline safety, stop_hook_active)
@@ -51,6 +51,10 @@ info() {
 cleanup() {
     rm -rf "$TEST_DIR" 2>/dev/null || true
     rm -rf "$BOOTSTRAP_DIR" 2>/dev/null || true
+    rm -rf "$PROJECT_DIR" 2>/dev/null || true
+    rm -rf "$LIGHT_PROJECT_DIR" 2>/dev/null || true
+    rm -rf "$ARCHIVE_PROJECT_DIR" 2>/dev/null || true
+    rm -rf "$SUBPROJECT_PARENT" 2>/dev/null || true
 }
 
 trap cleanup EXIT
@@ -66,8 +70,8 @@ echo "Repo: $REPO_ROOT"
 echo "Test dir: $TEST_DIR"
 echo ""
 
-# --- Test 1: create_project.sh ---
-info "Test 1: create_project.sh"
+# --- Test 1: create_project.sh profiles ---
+info "Test 1: create_project.sh profiles"
 
 cd "$REPO_ROOT"
 ./create_project.sh "CITestProject" "CI smoke test" > /dev/null 2>&1
@@ -81,8 +85,8 @@ else
     exit 1
 fi
 
-# Check required directories
-for dir in runs experiments/memos decisions scripts .claude; do
+# Research profile required directories
+for dir in runs experiments/memos decisions scripts .claude history/experiments history/phases reviews/cycles/CYCLE_TEMPLATE review_cycles .codex/skills; do
     if [[ -d "$PROJECT_DIR/$dir" ]]; then
         pass "Directory exists: $dir"
     else
@@ -91,11 +95,137 @@ for dir in runs experiments/memos decisions scripts .claude; do
 done
 
 # Check required files
-for file in CLAUDE.md CONCEPT.md scripts/run.sh scripts/draft_memo.py .claude/settings.json; do
+for file in AGENTS.md CLAUDE.md MEMORY.md README.md CONCEPT.md EXPERIMENT_LOG.md reviews/README.md scripts/run.sh scripts/draft_memo.py scripts/README.md .claude/settings.json .claude/README.md review_cycles/README.md experiments/memos/README.md reviews/cycles/CYCLE_TEMPLATE/REVIEW_PACKET.md reviews/cycles/CYCLE_TEMPLATE/GPT_REVIEW.md reviews/cycles/CYCLE_TEMPLATE/NEXT_PROMPT.md .codex/skills/README.md; do
     if [[ -f "$PROJECT_DIR/$file" ]]; then
         pass "File exists: $file"
     else
         fail "File missing: $file"
+    fi
+done
+
+for skill in prepare-review-packet ingest-gpt-review synthesize-next-prompt close-cycle bootstrap-subproject freeze-repo migrate-v1-to-v2; do
+    if [[ -f "$PROJECT_DIR/.codex/skills/$skill/SKILL.md" ]]; then
+        pass "Repo-local skill exists: $skill"
+    else
+        fail "Repo-local skill missing: $skill"
+    fi
+done
+
+if [[ "$(cat "$PROJECT_DIR/CLAUDE.md" 2>/dev/null)" == "@AGENTS.md" ]]; then
+    pass "CLAUDE.md is a thin wrapper to AGENTS.md"
+else
+    fail "CLAUDE.md should be exactly '@AGENTS.md'"
+fi
+
+if grep -q "Concise ledger only" "$PROJECT_DIR/EXPERIMENT_LOG.md" 2>/dev/null; then
+    pass "Research EXPERIMENT_LOG.md is ledger-only by template design"
+else
+    fail "Research EXPERIMENT_LOG.md should declare ledger-only usage"
+fi
+
+if grep -q "CYCLE_TEMPLATE" "$PROJECT_DIR/reviews/README.md" 2>/dev/null && \
+   grep -q "prepare-review-packet" "$PROJECT_DIR/reviews/README.md" 2>/dev/null && \
+   grep -q "MEMORY.md" "$PROJECT_DIR/reviews/README.md" 2>/dev/null; then
+    pass "Canonical review docs explain the basic loop"
+else
+    fail "Canonical review docs should explain the basic loop without deprecated docs"
+fi
+
+if grep -qi "compatibility" "$PROJECT_DIR/.claude/README.md" 2>/dev/null && \
+   grep -qi "deprecated" "$PROJECT_DIR/review_cycles/README.md" 2>/dev/null && \
+   grep -qi "compatibility" "$PROJECT_DIR/experiments/memos/README.md" 2>/dev/null && \
+   grep -qi "compatibility" "$PROJECT_DIR/scripts/README.md" 2>/dev/null; then
+    pass "Legacy research paths are marked as compatibility-only"
+else
+    fail "Legacy research paths should be explicitly marked as compatibility-only"
+fi
+
+if [[ ! -f "$PROJECT_DIR/GLOBAL_CLAUDE.md" ]]; then
+    pass "New project scaffold does not depend on GLOBAL_CLAUDE.md"
+else
+    fail "GLOBAL_CLAUDE.md should not be scaffolded into new projects"
+fi
+
+if grep -qi "deprecated" "$REPO_ROOT/templates/GLOBAL_CLAUDE.md" 2>/dev/null && \
+   grep -qi "Deprecated Compatibility Asset" "$REPO_ROOT/templates/LOGGING_README.md" 2>/dev/null && \
+   grep -qi "Deprecated Compatibility Asset" "$REPO_ROOT/templates/RUN_CARD.md" 2>/dev/null && \
+   grep -qi "Deprecated Compatibility Asset" "$REPO_ROOT/templates/EXPERIMENT_MEMO.md" 2>/dev/null; then
+    pass "Legacy template assets are clearly marked in the template repo"
+else
+    fail "Legacy template assets should be explicitly marked in the template repo"
+fi
+
+# Light profile
+./create_project.sh --profile light --dir "$TEST_DIR" "CILightProject" "CI light profile" > /dev/null 2>&1
+LIGHT_PROJECT_DIR="$TEST_DIR/CILightProject"
+
+if [[ -d "$LIGHT_PROJECT_DIR" ]]; then
+    pass "Light profile project created"
+else
+    fail "Light profile project not created"
+fi
+
+for file in AGENTS.md CLAUDE.md MEMORY.md README.md reviews/README.md reviews/cycles/CYCLE_TEMPLATE/REVIEW_PACKET.md .codex/skills/prepare-review-packet/SKILL.md; do
+    if [[ -f "$LIGHT_PROJECT_DIR/$file" ]]; then
+        pass "Light profile file exists: $file"
+    else
+        fail "Light profile missing file: $file"
+    fi
+done
+
+if [[ ! -f "$LIGHT_PROJECT_DIR/CONCEPT.md" && ! -f "$LIGHT_PROJECT_DIR/EXPERIMENT_LOG.md" && ! -f "$LIGHT_PROJECT_DIR/ARCHIVE.md" ]]; then
+    pass "Light profile avoids heavy research/archive files"
+else
+    fail "Light profile should not scaffold research/archive overlays"
+fi
+
+if [[ -f "$LIGHT_PROJECT_DIR/MEMORY.md" ]]; then
+    pass "Light profile includes MEMORY.md"
+else
+    fail "Light profile missing MEMORY.md"
+fi
+
+# Archive profile
+./create_project.sh --profile archive --dir "$TEST_DIR" "CIArchiveProject" "CI archive profile" > /dev/null 2>&1
+ARCHIVE_PROJECT_DIR="$TEST_DIR/CIArchiveProject"
+
+if [[ -d "$ARCHIVE_PROJECT_DIR" ]]; then
+    pass "Archive profile project created"
+else
+    fail "Archive profile project not created"
+fi
+
+for file in AGENTS.md CLAUDE.md MEMORY.md README.md ARCHIVE.md reviews/README.md reviews/cycles/CYCLE_TEMPLATE/REVIEW_PACKET.md .codex/skills/freeze-repo/SKILL.md; do
+    if [[ -f "$ARCHIVE_PROJECT_DIR/$file" ]]; then
+        pass "Archive profile file exists: $file"
+    else
+        fail "Archive profile missing file: $file"
+    fi
+done
+
+if [[ ! -f "$ARCHIVE_PROJECT_DIR/CONCEPT.md" && ! -f "$ARCHIVE_PROJECT_DIR/EXPERIMENT_LOG.md" ]]; then
+    pass "Archive profile avoids heavy research files"
+else
+    fail "Archive profile should not scaffold research overlay"
+fi
+
+# Nested subproject
+SUBPROJECT_PARENT="$TEST_DIR/HostRepo"
+mkdir -p "$SUBPROJECT_PARENT"
+./create_project.sh --profile research --subproject "$SUBPROJECT_PARENT/SubProject" "Nested CI subproject" > /dev/null 2>&1
+SUBPROJECT_DIR="$SUBPROJECT_PARENT/SubProject"
+
+if [[ -d "$SUBPROJECT_DIR" ]]; then
+    pass "Nested subproject created"
+else
+    fail "Nested subproject not created"
+fi
+
+for file in AGENTS.md CLAUDE.md MEMORY.md CONCEPT.md EXPERIMENT_LOG.md reviews/README.md reviews/cycles/CYCLE_TEMPLATE/REVIEW_PACKET.md .codex/skills/bootstrap-subproject/SKILL.md; do
+    if [[ -f "$SUBPROJECT_DIR/$file" ]]; then
+        pass "Nested subproject file exists: $file"
+    else
+        fail "Nested subproject missing file: $file"
     fi
 done
 

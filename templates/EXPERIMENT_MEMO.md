@@ -1,72 +1,19 @@
-# Experiment Memo: {{MEMO_ID}}
+# Deprecated Compatibility Asset
 
-> **Goal**: {{GOAL}}
->
-> **Date**: {{DATE}}
+This legacy memo format is retained only for helper-script compatibility.
 
----
+## Status
 
-## Observations (FACT)
+- Compatibility-only.
+- Not the canonical place for experiment history in v2.
+- Prefer `history/experiments/EXPERIMENT_DETAIL.md` for detailed writeups and `EXPERIMENT_LOG.md` for index-level tracking.
 
-> 이 섹션에는 **관측된 사실**만 기록합니다.
-> 원인, 이유, 해석은 아래 Inferences 섹션에 작성하세요.
+## Mapping To v2
 
-### Runs Summary
+- Legacy memo observations and inferences map most naturally into `history/experiments/`.
+- Any current blocker, go/stop decision, or next action discovered from a memo should also update `MEMORY.md`.
+- Any meaningful checkpoint reached through memo analysis should add one concise row to `EXPERIMENT_LOG.md`.
 
-| Run ID | Exp | Exit | Key Result |
-|--------|-----|------|------------|
-| | | | |
+## Why It Still Exists
 
-### Raw Facts
-
-<!-- 각 run에서 관측된 사실을 나열 -->
-
--
-
-
----
-
-## Inferences (HYPOTHESIS)
-
-> 이 섹션에는 **추론/가설**을 기록합니다.
-> 각 inference는 반드시 Evidence, Counter-evidence, Confidence를 포함해야 합니다.
-
-### Inference 1: [제목]
-
-**Claim**: [주장/가설]
-
-| Aspect | Description |
-|--------|-------------|
-| **Evidence** | [이 가설을 지지하는 관측 사실] |
-| **Counter-evidence** | [이 가설에 반하는 관측 사실, 없으면 "None observed"] |
-| **Confidence** | High / Medium / Low |
-
-**Reasoning**: [왜 이렇게 생각하는지 간단히]
-
----
-
-### Inference 2: [제목]
-
-**Claim**: [주장/가설]
-
-| Aspect | Description |
-|--------|-------------|
-| **Evidence** | |
-| **Counter-evidence** | |
-| **Confidence** | High / Medium / Low |
-
-**Reasoning**:
-
----
-
-## Next Steps
-
-- [ ]
-
-
----
-
-## Related
-
-- **Decision Record**: (해당 시 링크)
-- **Previous Memo**:
+`scripts/draft_memo.py` still creates files under `experiments/memos/` for compatibility with older research repos. Keep using it only when that legacy helper flow is still useful.

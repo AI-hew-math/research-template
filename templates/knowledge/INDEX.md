@@ -1,19 +1,7 @@
-# Knowledge Base
+# Deprecated Compatibility Asset
 
-프로젝트 간 공유되는 지식 베이스입니다.
+This legacy shared-knowledge template path is no longer the v2 source of truth.
 
-## 구조
+Use:
 
-- `papers/` - 논문 노트
-- `lessons_learned.md` - 프로젝트 간 교훈
-
-## 논문 검색
-
-논문은 `{Author}_{Year}_{Keyword}.md` 형식으로 저장됩니다.
-
-## 확장 기준
-
-| 트리거 | 액션 |
-|--------|------|
-| 한 주제 논문 10개+ | 해당 주제 MOC 생성 |
-| 전체 논문 20개+ | 태깅 시스템 도입 |
+- `templates/shared/knowledge/INDEX.md`

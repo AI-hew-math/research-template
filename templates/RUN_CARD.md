@@ -1,52 +1,19 @@
-# Run Card: {{RUN_ID}}
+# Deprecated Compatibility Asset
 
-> **FACT-ONLY**: 이 문서에는 관측된 사실만 기록합니다.
-> 원인 추정, 해석, 가설은 Experiment Memo에 작성하세요.
+This file documents the legacy run-card shape used by helper scripts.
 
-## Run Info
+## Status
 
-| Field | Value |
-|-------|-------|
-| **Run ID** | {{RUN_ID}} |
-| **Experiment** | {{EXP_NAME}} |
-| **Created** | {{TIMESTAMP}} |
-| **Host** | {{HOSTNAME}} |
-| **Git SHA** | {{GIT_SHA}} |
-| **SLURM Job** | {{SLURM_INFO}} |
-| **Exit Code** | {{EXIT_CODE}} |
-| **Duration** | {{DURATION}} |
+- Compatibility-only.
+- Not part of the minimal v2 authority contract.
+- New repos should treat `MEMORY.md`, `EXPERIMENT_LOG.md`, `history/`, and `reviews/` as the canonical state/history/review structure.
 
-## Command
+## Why It Still Exists
 
-```bash
-{{COMMAND}}
-```
+Research compatibility helpers such as `scripts/run.sh` still emit run cards under `runs/`.
+That output can remain useful as evidence, but it should feed into:
 
-## Working Directory
-
-```
-{{CWD}}
-```
-
-## Key Metrics (fill manually or via script)
-
-| Metric | Value |
-|--------|-------|
-| Loss | |
-| Accuracy | |
-| Other | |
-
-## Files in This Run
-
-- `stdout.log` - 표준 출력
-- `stderr.log` - 표준 에러
-- `meta.txt` - 실행 메타데이터
-- `env.txt` - 환경 변수 (있을 경우)
-- `git_diff.patch` - uncommitted 변경사항 (있을 경우)
-- `nvidia-smi.txt` - GPU 상태 (있을 경우)
-
-## Notes (FACT only)
-
-<!-- 관측된 사실만 기록. 예: "epoch 50에서 loss가 0.001 도달", "OOM 발생" -->
-
+- `history/experiments/` for detailed writeups
+- `EXPERIMENT_LOG.md` for compact indexing
+- `MEMORY.md` for current state changes
 

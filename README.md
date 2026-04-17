@@ -1,392 +1,187 @@
-# Research Project Template
+# research-template
 
 [![GitHub release](https://img.shields.io/github/v/release/AI-hew-math/research-template)](https://github.com/AI-hew-math/research-template/releases/latest)
 [![Smoke Test](https://github.com/AI-hew-math/research-template/actions/workflows/smoke.yml/badge.svg)](https://github.com/AI-hew-math/research-template/actions/workflows/smoke.yml)
 
-AI agent와 함께 쓰는 연구 프로젝트 템플릿
+Stage 3 of the v2 redesign is now in place. This repo is the canonical upstream source for the new template contract, while older review and logging helpers remain available only as explicit compatibility paths.
 
-## 권장 워크플로우
+## Canonical v2 Contract
 
-1. `./create_project.sh "Name" "설명"` → 프로젝트 생성
-2. `cd ../Name && claude` → hooks 승인 (UserPromptSubmit/Stop)
-3. `./scripts/run.sh --exp name cmd` → 실험 실행 + Run Card
-4. `./scripts/draft_memo.py` → 분석 Memo 작성
-5. `review_cycles/` GPT 업로드 → `RS_GIT_SNAP=1` 스냅샷 (선택)
+For new repos, the authority and state model is:
 
----
+1. `AGENTS.md`
+   - canonical instruction file
+   - always-loaded rules only
+2. `CLAUDE.md`
+   - thin wrapper to `AGENTS.md`
+3. `MEMORY.md`
+   - current state only
+4. `EXPERIMENT_LOG.md`
+   - concise ledger only
+5. `history/`
+   - detailed experiment or phase history
+6. `reviews/`
+   - canonical Claude↔GPT review loop
+7. `.codex/skills/`
+   - reusable workflow skills
 
-## Quickstart
+`GLOBAL_CLAUDE.md` is no longer a live concept in v2.
 
-```bash
-./create_project.sh "MyProject" "연구 설명"
-cd ../MyProject && claude          # /hooks → UserPromptSubmit, Stop 승인
-./scripts/run.sh --exp baseline python train.py
-python3 ./scripts/draft_memo.py --memo_id memo_v1 --goal "목표" --runs <RUN_ID>
-```
+The design rationale and compatibility decisions live in [V2_TEMPLATE_DESIGN.md](./V2_TEMPLATE_DESIGN.md).
 
----
+## Create A Repo
 
-## 전체 구조
-
-```
-~/projects/                # 또는 원하는 위치
-├── CLAUDE.md              # 전역 지침
-├── _knowledge/
-│   ├── papers/            # 논문 노트
-│   └── lessons_learned.md # 프로젝트 간 교훈
-│
-├── research-template/     # 이 템플릿
-├── ProjectA/
-│   ├── runs/              # Run Cards (자동 생성)
-│   ├── experiments/memos/ # Experiment Memos
-│   ├── decisions/         # Decision Records
-│   └── scripts/           # run.sh, draft_memo.py
-└── ...
-```
-
----
-
-## 처음 시작하기
-
-### 1. 템플릿 설치 (최초 1회)
-```bash
-# 원하는 위치에 클론
-git clone https://github.com/AI-hew-math/research-template ~/projects/research-template
-
-cd ~/projects/research-template
-chmod +x *.sh
-```
-
-### 2. 전역 CLAUDE.md 설정 (최초 1회)
-```bash
-cp templates/GLOBAL_CLAUDE.md ../CLAUDE.md
-```
-
-### 3. 지식 베이스 초기화 (최초 1회)
-```bash
-./init_knowledge.sh
-```
-
-### 4. 탭 타이틀 설정 (선택)
-```bash
-./experiment-tracker/install.sh   # 탭에 프로젝트 폴더명 표시
-```
-
----
-
-## 새 프로젝트 만들기
+The live scaffolder is [create_project.sh](/Users/mac_hew/Library/CloudStorage/OneDrive-postech.ac.kr/Claude_projects/research-template-fresh/create_project.sh).
 
 ```bash
-cd ~/projects/research-template
-./create_project.sh "ProjectName" "연구 주제 설명"
-cd ../ProjectName
-claude   # 사용 중인 agent CLI
+# Default: research profile, sibling repo next to research-template
+./create_project.sh "MyProject" "Research project"
+
+# Explicit profiles
+./create_project.sh --profile research "ProbeX" "Active research repo"
+./create_project.sh --profile light "ToolingRepo" "Light technical repo"
+./create_project.sh --profile archive "OldProject" "Frozen archive repo"
+
+# Top-level repo under a chosen parent directory
+./create_project.sh --profile light --dir ~/projects "OpsTools" "Small utility repo"
+
+# Nested local subproject
+./create_project.sh --subproject subprojects/ParserSpike "Nested local subproject"
+./create_project.sh --profile research --subproject subprojects/Ablation "Nested research subproject"
 ```
 
----
+Notes:
 
-## 3카드 로깅 시스템
+- Default profile is `research`.
+- `--dir` chooses a parent directory for a top-level repo.
+- `--subproject` creates a nested local subtree with its own local authority files.
 
-### 1. 실험 실행 (Run Card 자동)
+## Profile Matrix
 
-```bash
-./scripts/run.sh --exp baseline python train.py --lr 0.001
+| Profile | Canonical Files | Legacy Compat Copies |
+|---------|-----------------|----------------------|
+| `research` | `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `README.md`, `CONCEPT.md`, ledger-only `EXPERIMENT_LOG.md`, `history/`, `decisions/`, `reviews/README.md`, `reviews/cycles/CYCLE_TEMPLATE/`, `.codex/skills/` | `scripts/`, `.claude/`, `review_cycles/`, `experiments/memos/`, `runs/` |
+| `light` | `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `README.md`, `reviews/README.md`, `reviews/cycles/CYCLE_TEMPLATE/`, `.codex/skills/`, `src/` | none |
+| `archive` | `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `README.md`, `ARCHIVE.md`, `reviews/README.md`, `reviews/cycles/CYCLE_TEMPLATE/`, `.codex/skills/` | none |
+
+## Canonical Review Loop
+
+New repos should follow the review loop documented in `reviews/README.md`.
+
+Canonical cycle structure:
+
+```text
+reviews/
+├── README.md
+└── cycles/
+    ├── CYCLE_TEMPLATE/
+    │   ├── REVIEW_PACKET.md
+    │   ├── GPT_REVIEW.md
+    │   └── NEXT_PROMPT.md
+    └── CYCLE-0001/
+        ├── REVIEW_PACKET.md
+        ├── GPT_REVIEW.md
+        ├── NEXT_PROMPT.md
+        └── artifacts/
 ```
 
-→ `runs/YYYYMMDD_HHMMSS_baseline_host_gitsha/`에 자동 생성:
-- `run_card.md` - FACT-only 실행 기록
-- `stdout.log`, `stderr.log`
-- `meta.txt`, `env.txt`, `git_diff.patch`
+Canonical loop:
 
-### 2. 분석 후 Memo 작성
+1. Copy `reviews/cycles/CYCLE_TEMPLATE/` to a new `reviews/cycles/CYCLE-####/`.
+2. Use `prepare-review-packet` to assemble `REVIEW_PACKET.md`.
+3. Use `ingest-gpt-review` to store reviewer feedback in `GPT_REVIEW.md`.
+4. Use `synthesize-next-prompt` to write `NEXT_PROMPT.md`.
+5. Run Claude on that next prompt.
+6. Use `close-cycle` to update `MEMORY.md`, `EXPERIMENT_LOG.md`, and the linked history or decision docs.
 
-```bash
-python3 ./scripts/draft_memo.py \
-  --memo_id memo_lr_sweep \
-  --goal "learning rate 영향 분석" \
-  --runs <RUN_ID1> <RUN_ID2>
+The canonical workflow does not depend on clipboard scripts or `review_cycles/`.
+
+## What Gets Updated After Each Meaningful Cycle
+
+- `MEMORY.md`
+  - current phase
+  - pending actions
+  - blockers
+  - live decisions
+  - important path or environment changes
+- `EXPERIMENT_LOG.md`
+  - one concise row for a meaningful experiment, decision, phase checkpoint, or review checkpoint
+- `history/experiments/` or `history/phases/`
+  - detailed outcomes and evidence
+- `decisions/`
+  - durable decisions that need their own record
+
+## Repo-Local Skills
+
+Each scaffolded repo includes repo-local skills under `.codex/skills/`:
+
+- `prepare-review-packet`
+- `ingest-gpt-review`
+- `synthesize-next-prompt`
+- `close-cycle`
+- `bootstrap-subproject`
+- `freeze-repo`
+- `migrate-v1-to-v2`
+
+These are the reusable procedural workflow layer. They intentionally keep review and migration mechanics out of always-loaded instructions.
+
+## Canonical vs Legacy
+
+Stage 3 makes the boundary explicit:
+
+| Path Or File | Status | Meaning |
+|--------------|--------|---------|
+| `templates/base/`, `templates/profiles/`, `templates/shared/` | canonical | v2 source of truth |
+| `reviews/README.md` and `reviews/cycles/CYCLE_TEMPLATE/` | canonical | primary Claude↔GPT review loop |
+| `.codex/skills/` | canonical | reusable workflow layer |
+| `templates/GLOBAL_CLAUDE.md` | deprecated | kept only as a compatibility stub |
+| `templates/.claude/` | compatibility-only | older hook-based review export flow |
+| `review_cycles/` | deprecated compatibility cache | old hook/helper output area |
+| `templates/scripts/` | compatibility-only helper bundle | older research helpers, not primary review path |
+| `experiments/memos/` | deprecated compatibility area | old memo location |
+| `templates/LOGGING_README.md` | deprecated | no longer the primary workflow guide |
+| `templates/RUN_CARD.md` | deprecated | reference for old helper output |
+| `templates/EXPERIMENT_MEMO.md` | deprecated | reference for old memo format |
+| `scripts/bootstrap_logging.sh` | compatibility-only | for older repos, not new scaffolds |
+
+## Canonical Template Tree
+
+```text
+templates/
+├── base/
+│   ├── AGENTS.md
+│   ├── CLAUDE.md
+│   ├── MEMORY.md
+│   └── README.md
+├── profiles/
+│   ├── light/
+│   ├── research/
+│   │   ├── CONCEPT.md
+│   │   ├── EXPERIMENT_LOG.md
+│   │   ├── decisions/DECISION_RECORD.md
+│   │   └── history/
+│   │       ├── experiments/EXPERIMENT_DETAIL.md
+│   │       └── phases/PHASE_DETAIL.md
+│   └── archive/
+│       └── ARCHIVE.md
+└── shared/
+    ├── compat/
+    ├── knowledge/
+    ├── paper_note_TEMPLATE.md
+    ├── reviews/
+    │   ├── README.md
+    │   └── cycles/
+    │       ├── REVIEW_PACKET.md
+    │       ├── GPT_REVIEW.md
+    │       └── NEXT_PROMPT.md
+    └── skills/
 ```
 
-→ `experiments/memos/memo_lr_sweep.md` 생성
-- Observations: 자동 요약 (FACT)
-- Inferences: 템플릿만 제공 (Evidence/Counter-evidence/Confidence)
+## What Is Still Deferred
 
-### 3. 중요 결정 시 Decision Record
+Later work can focus on:
 
-`decisions/DR-001_optimizer.md` 수동 작성:
-- 고려한 대안들
-- 정량적 성공 기준
-- 롤백 계획
-
----
-
-## 기존 프로젝트에 로깅 추가
-
-```bash
-./scripts/bootstrap_logging.sh /path/to/existing_project
-```
-
-- 기존 파일 덮어쓰기 없음
-- 없는 디렉토리/스크립트만 추가
-
----
-
-## Git Snapshot (Opt-in)
-
-실험 실행 후 코드/문서 변경을 자동으로 커밋합니다.
-
-### 사용법
-
-```bash
-# 수동 스냅샷
-./scripts/git_snap.sh "checkpoint_v1"
-
-# Push까지 포함
-./scripts/git_snap.sh "release" --push
-
-# run.sh 연동 (환경변수)
-RS_GIT_SNAP=1 ./scripts/run.sh --exp baseline python train.py
-RS_GIT_SNAP=1 RS_GIT_PUSH=1 ./scripts/run.sh --exp baseline python train.py
-```
-
-### 화이트리스트 (커밋 대상)
-
-| 경로 | 설명 |
-|------|------|
-| `src/`, `scripts/`, `configs/` | 코드 |
-| `*.md` (루트) | 문서 |
-| `runs/*/run_card.md` | Run Cards |
-| `runs/*/metrics.json` | 메트릭 |
-| `experiments/memos/*.md` | Memos |
-| `decisions/*.md` | Decision Records |
-
-### 금지 파일 (절대 커밋 안 됨)
-
-- `runs/*/stdout.log`, `stderr.log`, `env.txt`, `nvidia-smi.txt`
-- `data/`, `checkpoints/`, `wandb/`
-- `*.pt`, `*.pth`, `*.ckpt`
-- `review_cycles/**` 전체
-
-### 정책
-
-- **기본**: commit만 (push는 opt-in)
-- **review_cycles**: git에 포함되지 않음 (`.gitignore`로 차단)
-- **runs/index.csv**: 파생물이므로 기본 화이트리스트에 미포함. 필요시 `git add runs/index.csv` 후 커밋.
-- **서버 권장**: push가 번거로우면 로컬에서만 push
-
----
-
-## Review Cycles (GPT 검토)
-
-**cycle은 프롬프트 단위로 증가합니다.** 세션 종료 없이 매 프롬프트마다 패킷이 자동 생성됩니다.
-
-### 패킷 파일 스펙
-
-| 파일 | 조건 | 우선순위 | 설명 |
-|------|------|----------|------|
-| `UPLOAD_LIST.md` | 항상 | 필수 | 업로드 가이드 |
-| `packet.md` | 항상 | 필수 | 메타데이터 + 파일 크기 |
-| `user_prompt.txt` | 항상 | 필수 | 사용자 프롬프트 |
-| `last_assistant_message.md` | 항상 | 필수 | Agent 최종 응답 |
-| `run_summary.md` | run 존재 시 | 필수 | 최신 Run 요약 (5항목) |
-| `run_events.jsonl` | run 존재 시 | 권장 | Run 이벤트 매니페스트 |
-| `git_diff.patch` | 변경사항 있을 때 | 권장 | 코드 diff (없으면 미생성) |
-| `git_status.txt` | git repo | 선택 | git status 출력 |
-| `git_head.txt` | git repo | 선택 | 현재 커밋 SHA |
-| `transcript_tail.jsonl` | transcript 제공 시 | 권장 | 대화 요약 (에러 우선 추출) |
-| `run_logs.txt` | 최신 run 실패 시 | 권장 | 실패 로그 (성공 시 미생성) |
-| `claude_transcript.jsonl` | transcript 제공 시 | 보관용 | 전체 대화 (업로드 비권장) |
-
-> **참고**: `run_logs.txt`는 이번 프롬프트에서 실행한 최신 run이 **실패(exit_code != 0)**했을 때만 생성됩니다. 성공 run에서는 생성되지 않습니다.
-
-### 구조 (v1.1+)
-
-```
-review_cycles/
-├── cycle_0001/
-│   ├── to_gpt/
-│   │   ├── UPLOAD_LIST.md              # [필수] 업로드 순서 가이드
-│   │   ├── packet.md                   # [필수] 메타데이터 + 파일 크기
-│   │   ├── user_prompt.txt             # [필수] 사용자 프롬프트
-│   │   ├── last_assistant_message.md   # [필수] Agent 응답
-│   │   ├── run_summary.md              # [필수] 최신 Run 요약
-│   │   ├── run_events.jsonl            # [권장] Run 이벤트 매니페스트
-│   │   ├── git_diff.patch              # [권장] 코드 diff (변경 시만)
-│   │   ├── transcript_tail.jsonl       # [권장] 대화 요약 (에러 우선)
-│   │   ├── run_logs.txt                # [권장] 실패 로그 (실패 시만)
-│   │   ├── git_status.txt, git_head.txt # [선택]
-│   │   └── claude_transcript.jsonl     # [보관용] 전체 대화
-│   ├── from_gpt/
-│   └── to_claude/
-└── ...
-```
-
-### 환경변수
-
-| 변수 | 기본값 | 설명 |
-|------|--------|------|
-| `RS_TRANSCRIPT_TAIL_LINES` | 400 | transcript_tail 최대 라인 수 |
-| `RS_HOOK_DEBUG` | 0 | 1로 설정 시 hook_input_stop.json 저장 |
-| `RS_CYCLE_STALE_MINUTES` | 60 | cycle이 오래됐다고 판단하는 시간 (분) |
-| `RS_INCLUDE_ALL_SESSIONS` | 0 | 1로 설정 시 모든 세션의 run을 run_summary에 포함 |
-| `RS_REDACT` | 0 | 1로 설정 시 민감정보(API 키, 토큰 등) 자동 마스킹 |
-| `RS_RUNS_MAX` | 10 | run_summary에 포함할 최대 run 개수 |
-| `RS_SAVE_ENV` | 0 | 1로 설정 시 env.txt 저장 (allowlist만 저장) |
-| `RS_BUNDLE_MAX_KB` | 80 | gpt_bundle.md 최대 크기 (KB) |
-| `RS_BUNDLE_DIFF_MAX_LINES` | 300 | gpt_bundle.md 내 git diff 최대 라인 수 |
-
-### run_events.jsonl 신뢰성
-
-**Snapshot 기반 Cycle 귀속**: `run.sh`는 run **시작 시점**에 cycle을 결정합니다. 이로 인해 60분 이상 걸리는 장시간 실험도 시작한 cycle에 올바르게 귀속됩니다.
-
-**Atomic Append**: `run.sh`는 fcntl 파일 락으로 동시 실행 시에도 라인이 깨지지 않습니다. 락 실패 시 3회 재시도(100/200/400ms 백오프)를 수행하고, JSON 손상 감지 시 별도 파일로 격리합니다.
-
-**Stale Cycle 방지**: `last_activity_ts` 기준으로 60분 비활동 시 해당 run은 `review_cycles/unattributed_run_events.jsonl`에 별도 기록됩니다. 활성 cycle은 각 run 실행 시 activity가 갱신되어 장시간 연속 실험도 같은 cycle에 유지됩니다.
-
-**Multi-Session 분리**: hook payload에서 session_id를 추출하여 세션별로 run을 분리합니다. 전역 파일에 의존하지 않아 경쟁 상태가 발생하지 않습니다. `RS_INCLUDE_ALL_SESSIONS=1`로 모든 세션의 run을 포함할 수 있습니다.
-
-**정합성 검사**: Stop에서 run_events.jsonl을 스캔하여 유효한 라인만 `run_events.clean.jsonl`로 분리하고, 손상된 라인은 `run_events.bad.jsonl`로 격리합니다. packet.md에 손상 경고가 표시됩니다.
-
-**민감정보 보호**:
-- `env.txt`는 기본 OFF (`RS_SAVE_ENV=0`). 활성화 시에도 PATH, CUDA 등 안전한 변수만 저장
-- `RS_REDACT=1` 설정 시 API 키, 토큰, 비밀번호 패턴이 `****`로 마스킹
-
-**Fallback**: hooks가 승인되지 않아 `run_events.jsonl`이 없을 때, Stop에서 `runs/*/run_card.md`를 스캔하여 최소한의 `run_summary.md`를 생성합니다.
-
-### gpt_bundle.md (단일 파일 업로드)
-
-GPT에 단일 파일만 업로드하고 싶을 때 `gpt_bundle.md`를 사용합니다. 포함 내용:
-
-1. 메타데이터 (cycle, timestamp)
-2. Agent 응답 (있으면)
-3. Run Summary (필수)
-4. 실패 로그 요약 (실패 시)
-5. Git diff (변경 시, 최대 300줄)
-6. Transcript tail (공간 여유 시)
-
-기본 80KB 제한으로 자동 truncation됩니다.
-
-### 사용 흐름
-
-1. agent CLI 실행 → hooks 승인 (최초 1회)
-2. 프롬프트 입력 → agent 응답 완료
-3. `review_cycles/cycle_XXXX/to_gpt/` 자동 생성
-4. GPT에 **필수 + 권장** 파일만 업로드 → 피드백 받기
-
-### 자동 생성 시점 (hooks 기반)
-
-- **UserPromptSubmit**: cycle +1, `user_prompt.txt` 저장
-- **Stop**: `last_assistant_message.md`, transcript_tail, run_logs, packet 갱신
-
-### 2단계 전략: 보관 vs 업로드
-
-- **claude_transcript.jsonl**: 전체 대화 보관용 (큰 파일, 업로드 비권장)
-- **transcript_tail.jsonl**: 업로드용 요약 (에러/실패/traceback 우선 추출, 최근 라인 우선)
-- **run_logs.txt**: 이번 프롬프트의 최신 run이 실패 시에만 생성 (성공 run에서는 미생성)
-- **git_diff.patch**: uncommitted changes가 있을 때만 생성 (없으면 미생성)
-
-#### transcript_tail.jsonl 포맷 (valid JSONL)
-
-```jsonl
-{"type":"line","idx":0,"score":0,"text":"Starting task..."}
-{"type":"omitted","count":15}
-{"type":"line","idx":18,"score":2,"text":"Error: File not found"}
-{"type":"line","idx":19,"score":1,"text":"Traceback (most recent call last):"}
-```
-
-- `type:"line"`: 원본 라인 (`idx`=원본 인덱스, `score`=에러 관련도, `text`=내용)
-- `type:"omitted"`: 생략 표시 (`count`=생략된 라인 수)
-
-### 실동작 검증 (최초 1회)
-
-```bash
-cd MyProject && claude                    # 1. /hooks → UserPromptSubmit, Stop 승인
-# 프롬프트 1회 입력
-cat review_cycles/cycle_0001/to_gpt/user_prompt.txt   # 2. 프롬프트 저장 확인
-# agent 응답 완료 대기
-ls review_cycles/cycle_0001/to_gpt/       # 3. packet.md, 파일 크기 확인
-```
-
----
-
-## 권장 운영 규칙 (CLAUDE.md에 명시)
-
-> 아래는 agent에게 지시하는 **운영 규칙**입니다. 자동 실행이 아니라, CLAUDE.md를 통해 agent가 따르도록 유도합니다.
-
-| 상황 | 권장 행동 |
-|------|----------|
-| 세션 시작 | CONCEPT.md 확인 |
-| 새 논문 발견 | `_knowledge/papers/`에 저장 |
-| 실험 교훈 | `_knowledge/lessons_learned.md`에 추가 |
-| 실험 시작 전 | `lessons_learned.md` 확인 |
-
----
-
-## 지식이 연결되는 방식
-
-```
-[ProbeX 프로젝트]
-    ↓ topology loss 사용
-    ↓
-[_knowledge/papers/Chen_2024_TopoLoss.md]
-    ↓
-    ↓ 같은 논문 참조
-    ↓
-[SegPH 프로젝트]
-```
-
----
-
-## 운영 편의 (옵션)
-
-### 클립보드 → GPT 리뷰 저장 (macOS)
-
-```bash
-# GPT 응답을 복사한 후
-./scripts/save_clipboard_to_gpt_review.sh
-
-# 또는 stdin 사용
-echo "GPT 피드백 내용" | ./scripts/save_clipboard_to_gpt_review.sh --stdin
-```
-→ `review_cycles/cycle_XXXX/from_gpt/gpt_review.md`에 저장
-
-### 클립보드 → 다음 프롬프트 저장 (macOS)
-
-```bash
-./scripts/save_clipboard_to_next_prompt.sh
-# 또는
-echo "다음 지시" | ./scripts/save_clipboard_to_next_prompt.sh --stdin
-```
-→ `review_cycles/cycle_XXXX/to_claude/next_prompt.txt`에 저장
-
-### Run Index CSV
-
-```bash
-RS_RUN_INDEX=1 ./scripts/run.sh --exp baseline python train.py
-```
-→ `runs/index.csv`에 자동 append:
-```
-run_id,exp_name,exit_code,seconds,timestamp,host,git_sha
-```
-
----
-
-## 확장 기준
-
-**필요할 때만 구조를 추가:**
-
-| 트리거 | 액션 |
-|--------|------|
-| 한 주제 논문 10개+ | MOC (Map of Content) 생성 |
-| 3개+ 프로젝트가 같은 기법 | methods/ 폴더 생성 |
-
----
-
-## 요약
-
-| 원칙 | 설명 |
-|------|------|
-| 최소 시작 | papers/ + lessons_learned.md 만으로 시작 |
-| 필요시 확장 | 논문 10개+ 될 때 MOC 추가 |
-| 간결한 규칙 | agent 지침은 핵심 규칙만 |
-| FACT 분리 | Run Card=사실, Memo=사실+가설 분리 |
+- downstream repo migration execution
+- further retirement of research-profile compatibility baggage once risk is lower
+- migrating older helper outputs into the canonical review-cycle structure where useful
+- optional automation on top of the new skill layer

@@ -1,5 +1,5 @@
 #!/bin/bash
-# bootstrap_logging.sh - 기존 프로젝트에 3카드 로깅 시스템 추가
+# bootstrap_logging.sh - 레거시 로깅 호환 부트스트랩
 #
 # Usage: ./scripts/bootstrap_logging.sh /path/to/existing_project
 #
@@ -7,6 +7,11 @@
 #   - 기존 파일 절대 덮어쓰지 않음
 #   - 없는 디렉토리/스크립트만 추가
 #   - EXPERIMENT_LOG.md가 있으면 마이그레이션 안내 생성
+#
+# Status:
+#   - compatibility-only helper for older repos
+#   - not the canonical way to start a new v2 repo
+#   - prefer create_project.sh for new repos
 
 set -e
 
@@ -40,9 +45,10 @@ else
 fi
 
 echo "=========================================="
-echo "3-Card Logging System Bootstrap"
+echo "Legacy Logging Compatibility Bootstrap"
 echo "=========================================="
 echo "Target: $TARGET_DIR"
+echo "Note: new repos should be created with create_project.sh"
 echo ""
 
 CHANGES_MADE=0

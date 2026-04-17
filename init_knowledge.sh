@@ -1,15 +1,18 @@
 #!/bin/bash
 
-# Knowledge Base 초기화 스크립트
-# 처음 한 번만 실행
-# Usage: ./init_knowledge.sh
+# Knowledge base initializer
+# Usage: ./init_knowledge.sh [ROOT_DIR]
+
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECTS_DIR="$SCRIPT_DIR/.."
-KNOWLEDGE_DIR="$PROJECTS_DIR/_knowledge"
-TEMPLATE_DIR="$SCRIPT_DIR/templates/knowledge"
+ROOT_DIR="${1:-$SCRIPT_DIR/..}"
+ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
+KNOWLEDGE_DIR="$ROOT_DIR/_knowledge"
+TEMPLATE_DIR="$SCRIPT_DIR/templates/shared/knowledge"
+PAPER_TEMPLATE="$SCRIPT_DIR/templates/shared/paper_note_TEMPLATE.md"
 
-if [ -d "$KNOWLEDGE_DIR" ]; then
+if [[ -d "$KNOWLEDGE_DIR" ]]; then
     echo "⚠️  _knowledge/ 폴더가 이미 존재합니다: $KNOWLEDGE_DIR"
     echo "   기존 지식 베이스를 유지합니다."
     exit 0
@@ -19,15 +22,11 @@ echo "🧠 지식 베이스 초기화 중..."
 echo "   위치: $KNOWLEDGE_DIR"
 echo ""
 
-# 디렉토리 생성
 mkdir -p "$KNOWLEDGE_DIR/papers"
 
-# 핵심 파일 복사
 cp "$TEMPLATE_DIR/INDEX.md" "$KNOWLEDGE_DIR/"
 cp "$TEMPLATE_DIR/lessons_learned.md" "$KNOWLEDGE_DIR/"
-
-# 논문 템플릿 복사
-cp "$SCRIPT_DIR/templates/paper_note_TEMPLATE.md" "$KNOWLEDGE_DIR/papers/_TEMPLATE.md"
+cp "$PAPER_TEMPLATE" "$KNOWLEDGE_DIR/papers/_TEMPLATE.md"
 
 echo "✅ 지식 베이스 초기화 완료!"
 echo ""
